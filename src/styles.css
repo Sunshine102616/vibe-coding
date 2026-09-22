@@ -1,0 +1,361 @@
+/* XingHo Read —— 手写样式
+   技术路线（TECH_DESIGN 第四节）：不引入 UI 组件库，只依赖 CSS 本身。 */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1f2328;
+  background: #f6f7f9;
+}
+
+.app {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+/* ---------- 页头 ---------- */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #e3e6ea;
+}
+
+.brand {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+
+.nav {
+  display: flex;
+  gap: 8px;
+}
+
+.nav-btn {
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #444c56;
+  background: #ffffff;
+  border: 1px solid #d5d9de;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.nav-btn:hover {
+  background: #eef1f4;
+}
+
+.nav-btn.active {
+  color: #ffffff;
+  background: #2f6fd0;
+  border-color: #2f6fd0;
+}
+
+/* ---------- 页面容器 ---------- */
+
+.app-main {
+  padding-top: 24px;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ---------- 卡片 ---------- */
+
+.card {
+  padding: 18px 20px;
+  background: #ffffff;
+  border: 1px solid #e3e6ea;
+  border-radius: 10px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.card-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+/* ---------- 打卡统计 ---------- */
+
+.stat-card {
+  display: flex;
+  gap: 36px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-num {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #2f6fd0;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: #5a626c;
+}
+
+/* ---------- 文件夹列表 ---------- */
+
+.folder-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 14px;
+  background: #f1f3f6;
+  border-radius: 999px;
+}
+
+.folder-item.active {
+  color: #ffffff;
+  background: #2f6fd0;
+}
+
+.folder-item.active .muted {
+  color: #dbe6f8;
+}
+
+/* ---------- 材料列表 ---------- */
+
+.material-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.material-item + .material-item {
+  border-top: 1px solid #eef1f4;
+}
+
+.material-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 4px;
+  font-family: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.material-open:hover {
+  background: #f8f9fb;
+}
+
+.material-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+/* ---------- 表单 ---------- */
+
+.field {
+  margin-bottom: 18px;
+}
+
+.field > label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.input {
+  width: 100%;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #1f2328;
+  background: #ffffff;
+  border: 1px solid #d5d9de;
+  border-radius: 6px;
+}
+
+.input:focus {
+  outline: 2px solid #cfe0f7;
+  border-color: #2f6fd0;
+}
+
+.textarea {
+  resize: vertical;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.row .input {
+  flex: 1;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #6b737d;
+}
+
+.actions {
+  padding-top: 8px;
+}
+
+/* ---------- 按钮 ---------- */
+
+.btn {
+  padding: 7px 16px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #444c56;
+  background: #ffffff;
+  border: 1px solid #d5d9de;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #eef1f4;
+}
+
+.btn-primary {
+  color: #ffffff;
+  background: #2f6fd0;
+  border-color: #2f6fd0;
+}
+
+.btn-primary:hover {
+  background: #2a63ba;
+}
+
+.btn-ghost {
+  color: #2f6fd0;
+  background: #ffffff;
+  border-color: #b9d2f2;
+}
+
+.btn-ghost:hover {
+  background: #eef4fd;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+/* ---------- 播放控制 ---------- */
+
+.player {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+/* ---------- 句子列表 ---------- */
+
+.sentence-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sentence-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.sentence-item:last-child {
+  border-bottom: 0;
+}
+
+.sentence-item.current {
+  background: #eef4fd;
+  border-left: 3px solid #2f6fd0;
+}
+
+.sentence-main {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sentence-no {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2f6fd0;
+}
+
+.sentence-text {
+  font-size: 15px;
+}
+
+.sentence-tools {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+/* ---------- 其它 ---------- */
+
+.muted {
+  font-size: 13px;
+  color: #6b737d;
+}
+
+.notice {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #7a5a12;
+  background: #fff8e6;
+  border: 1px solid #f0dfae;
+  border-radius: 8px;
+}
