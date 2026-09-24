@@ -47,7 +47,7 @@ function ReadyView({ data, onOpenMaterial, onGoNew }) {
       />
 
       <p className="notice">
-        Day 8 mock 数据版：列表和卡片来自 src/mock/homeData.js 的本地假数据，尚未接 IndexedDB。
+        这里是示例数据，仅用于看界面效果；第 3 周接入真实数据后，就会显示你自己导入的材料。
       </p>
     </div>
   )

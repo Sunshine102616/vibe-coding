@@ -1,5 +1,11 @@
 /* XingHo Read —— 手写样式
-   技术路线（TECH_DESIGN 第四节）：不引入 UI 组件库，只依赖 CSS 本身。 */
+   技术路线（TECH_DESIGN 第四节）：不引入 UI 组件库，只依赖 CSS 本身。
+
+   Day 9 已按 DESIGN_RULES.md 审查并修复，取值必须遵守该文件：
+   - 色板：次要文字用 #626a74（原 #6b737d 对比度不达标）
+   - 间距刻度：只用 4 / 8 / 12 / 16 / 24 / 32 / 48
+   - 按钮高度：常规 36px、小号 32px
+   - 列表项内边距统一 12px 20px，与卡片内边距对齐 */
 
 * {
   box-sizing: border-box;
@@ -40,11 +46,13 @@ body {
 
 .nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .nav-btn {
-  padding: 6px 14px;
+  min-height: 36px;
+  padding: 8px 14px;
   font-family: inherit;
   font-size: 14px;
   color: #444c56;
@@ -79,7 +87,7 @@ body {
 /* ---------- 卡片 ---------- */
 
 .card {
-  padding: 18px 20px;
+  padding: 20px;
   background: #ffffff;
   border: 1px solid #e3e6ea;
   border-radius: 10px;
@@ -89,8 +97,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .card-head h2 {
@@ -102,7 +111,8 @@ body {
 
 .stat-card {
   display: flex;
-  gap: 36px;
+  flex-wrap: wrap;
+  gap: 32px;
 }
 
 .stat {
@@ -119,7 +129,7 @@ body {
 
 .stat-label {
   font-size: 13px;
-  color: #5a626c;
+  color: #626a74;
 }
 
 /* ---------- 文件夹列表 ---------- */
@@ -137,7 +147,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  min-height: 32px;
+  padding: 4px 12px;
   font-size: 14px;
   background: #f1f3f6;
   border-radius: 999px;
@@ -149,7 +160,7 @@ body {
 }
 
 .folder-item.active .muted {
-  color: #dbe6f8;
+  color: #cfe0f7;
 }
 
 /* ---------- 材料列表 ---------- */
@@ -168,9 +179,12 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  padding: 12px 4px;
+  gap: 4px;
+  min-height: 56px;
+  width: calc(100% + 40px);
+  /* 左右内边距抵消卡片自身的 20px，让列表文字与卡片标题 h2 左边缘对齐 */
+  padding: 12px 20px;
+  margin: 0 -20px;
   font-family: inherit;
   text-align: left;
   background: none;
@@ -191,25 +205,51 @@ body {
 /* ---------- 表单 ---------- */
 
 .field {
-  margin-bottom: 18px;
+  margin-bottom: 24px;
 }
 
 .field > label {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-size: 14px;
   font-weight: 600;
 }
 
 .input {
   width: 100%;
-  padding: 8px 10px;
+  min-height: 36px;
+  padding: 8px 12px;
   font-family: inherit;
   font-size: 14px;
   color: #1f2328;
   background: #ffffff;
   border: 1px solid #d5d9de;
   border-radius: 6px;
+}
+
+/* 原生文件选择框：与全站控件对齐，并允许长文件名换行，避免窄屏撑破卡片 */
+.input[type='file'] {
+  padding: 6px 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.input[type='file']::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 4px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #444c56;
+  background: #f1f3f6;
+  border: 1px solid #d5d9de;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.input[type='file']::file-selector-button:hover {
+  background: #eef1f4;
 }
 
 .input:focus {
@@ -223,17 +263,19 @@ body {
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .row .input {
   flex: 1;
+  min-width: 200px;
 }
 
 .hint {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 13px;
-  color: #6b737d;
+  color: #626a74;
 }
 
 .actions {
@@ -243,7 +285,8 @@ body {
 /* ---------- 按钮 ---------- */
 
 .btn {
-  padding: 7px 16px;
+  min-height: 36px;
+  padding: 8px 16px;
   font-family: inherit;
   font-size: 14px;
   color: #444c56;
@@ -278,7 +321,8 @@ body {
 }
 
 .btn-small {
-  padding: 4px 10px;
+  min-height: 32px;
+  padding: 6px 12px;
   font-size: 13px;
 }
 
@@ -289,8 +333,15 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  padding-bottom: 14px;
+  padding-bottom: 16px;
   border-bottom: 1px solid #eef1f4;
+}
+
+/* 播放状态是「当前进度」，不是次要说明，权重高于 .muted */
+.player-status {
+  margin-left: auto;
+  font-size: 13px;
+  color: #1f2328;
 }
 
 /* ---------- 句子列表 ---------- */
@@ -301,12 +352,17 @@ body {
   list-style: none;
 }
 
+/* 与首页材料列表同款：同为「一行一条内容」的列表，规格必须一致 */
 .sentence-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
-  padding: 12px;
+  min-height: 56px;
+  padding: 12px 20px;
+  margin: 0 -20px;
+  width: calc(100% + 40px);
   border-bottom: 1px solid #f0f2f5;
 }
 
@@ -340,10 +396,10 @@ body {
 .sentence-tools {
   display: flex;
   flex: none;
-  gap: 6px;
+  gap: 8px;
 }
 
-/* ---------- 页面状态（Day 8） ---------- */
+/* ---------- 页面状态（Day 8，Day 9 加固对比度） ---------- */
 /* 四种状态：加载中 / 空 / 错误 / 正常。正常状态复用上面的卡片与列表样式，
    这里只补另外三种状态需要的样子。 */
 
@@ -351,11 +407,11 @@ body {
   padding: 32px 20px;
   text-align: center;
   background: #fafbfc;
-  border: 1px dashed #d5d9de;
+  border: 1px dashed #b4b2a9;
 }
 
 .state-title {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   font-size: 16px;
   font-weight: 600;
   color: #1f2328;
@@ -364,16 +420,16 @@ body {
 .state-desc {
   margin: 0;
   font-size: 13px;
-  color: #6b737d;
+  color: #626a74;
 }
 
 .state-box .btn {
-  margin-top: 16px;
+  margin-top: 24px;
 }
 
 .state-error {
   background: #fdf7f7;
-  border-color: #f0c9c9;
+  border-color: #c96a6a;
 }
 
 .state-error .state-title {
@@ -384,13 +440,13 @@ body {
 .skeleton-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .skeleton-bar {
   height: 14px;
   border-radius: 6px;
-  background: #eef1f4;
+  background: #e3e6ea;
 }
 
 .skeleton-bar.w60 {
@@ -402,22 +458,55 @@ body {
 }
 
 .skeleton-list + .state-desc {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 /* ---------- 其它 ---------- */
 
 .muted {
   font-size: 13px;
-  color: #6b737d;
+  color: #626a74;
 }
 
 .notice {
   margin: 0;
-  padding: 10px 14px;
+  padding: 12px 16px;
   font-size: 13px;
   color: #7a5a12;
   background: #fff8e6;
-  border: 1px solid #f0dfae;
+  border: 1px solid #e0c98a;
   border-radius: 8px;
+}
+
+/* ---------- 移动端（≤ 600px） ---------- */
+/* 规则 R8：窄屏不得出现横向滚动条 */
+
+@media (max-width: 600px) {
+  .app {
+    padding: 16px 16px 32px;
+  }
+
+  .stat-card {
+    gap: 24px;
+  }
+
+  /* 句子列表：按钮组换到正文下方，避免挤压句子文本 */
+  .sentence-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sentence-tools {
+    align-self: flex-end;
+  }
+
+  .player-status {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+
+  .brand {
+    font-size: 20px;
+  }
 }

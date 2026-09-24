@@ -28,7 +28,7 @@ export default function Practice({ material, onBack }) {
           <button className="btn btn-primary">播放</button>
           <button className="btn">上一句</button>
           <button className="btn">下一句</button>
-          <span className="muted">
+          <span className="player-status">
             当前：第 1 句 / 共 {total} 句
           </span>
         </div>
