@@ -1,5 +1,6 @@
 // 首页 —— Day 8｜mock 数据版（板块①生成页面，板块③接假数据）
 // Day 10｜修复：文件夹胶囊点了没反应 —— 补上点击与筛选
+// Day 12｜用 Skill 自检后补齐筛选的三种情况（有结果 / 无结果 / 清空恢复）
 //
 // 生成依据就是 Day 8 清单里的那一句话；界面结构依据 PRD 第三节：
 // 文件夹列表 + 材料列表 + 连续打卡天数。
@@ -44,11 +45,18 @@ function ReadyView({ data, onOpenMaterial, onGoNew }) {
   const selectedFolder =
     data.folders.find((f) => f.id === selectedFolderId) || data.folders[0]
 
+  // 是否处于「筛选状态」——选了「全部材料」不算筛选
+  const isFiltering = selectedFolder.id !== 'all'
+
   // 「全部材料」看全部；其他文件夹按名字过滤
-  const visibleMaterials =
-    selectedFolder.id === 'all'
-      ? data.materials
-      : data.materials.filter((m) => m.folder === selectedFolder.name)
+  const visibleMaterials = isFiltering
+    ? data.materials.filter((m) => m.folder === selectedFolder.name)
+    : data.materials
+
+  // 「清除筛选」= 回到「全部材料」
+  function clearFilter() {
+    setSelectedFolderId('all')
+  }
 
   return (
     <div className="page">
@@ -63,6 +71,9 @@ function ReadyView({ data, onOpenMaterial, onGoNew }) {
       <MaterialCard
         materials={visibleMaterials}
         folderName={selectedFolder.name}
+        isFiltering={isFiltering}
+        totalCount={data.materials.length}
+        onClearFilter={clearFilter}
         onOpenMaterial={onOpenMaterial}
         onGoNew={onGoNew}
       />
@@ -128,18 +139,54 @@ function FolderCard({ folders, materials, selectedId, onSelect, onGoNew }) {
 }
 
 // 材料列表卡片：只显示当前文件夹下的材料
-function MaterialCard({ materials, folderName, onOpenMaterial, onGoNew }) {
+//
+// 三种情况（Day 12 用 Skill 自检后补齐）：
+//   有结果  —— 正常列出
+//   无结果  —— 说明原因 + 给「查看全部材料」按钮，不让用户卡在空页面上
+//   清空恢复 —— 筛选生效时标题旁显示「筛选中」标识 + 「清除」入口
+function MaterialCard({
+  materials,
+  folderName,
+  isFiltering,
+  totalCount,
+  onClearFilter,
+  onOpenMaterial,
+  onGoNew,
+}) {
   return (
     <section className="card">
       <div className="card-head">
         <h2>材料</h2>
+        {isFiltering && (
+          <span className="filter-chip">
+            筛选中：{folderName}
+            <button
+              type="button"
+              className="filter-clear"
+              onClick={onClearFilter}
+              aria-label={`清除筛选，显示全部 ${totalCount} 条材料`}
+            >
+              清除
+            </button>
+          </span>
+        )}
         <button className="btn btn-primary" onClick={onGoNew}>
           新建材料
         </button>
       </div>
 
       {materials.length === 0 ? (
-        <p className="state-desc">「{folderName}」里还没有材料。</p>
+        <div className="empty-inline">
+          <p className="state-desc">「{folderName}」里还没有材料。</p>
+          <div className="empty-actions">
+            <button type="button" className="btn btn-small" onClick={onGoNew}>
+              往这里新建材料
+            </button>
+            <button type="button" className="btn btn-small" onClick={onClearFilter}>
+              查看全部材料（{totalCount}）
+            </button>
+          </div>
+        </div>
       ) : (
         <ul className="material-list">
           {materials.map((m) => (
