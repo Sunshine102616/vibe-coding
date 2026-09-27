@@ -1,4 +1,5 @@
 // 首页 —— Day 8｜mock 数据版（板块①生成页面，板块③接假数据）
+// Day 10｜修复：文件夹胶囊点了没反应 —— 补上点击与筛选
 //
 // 生成依据就是 Day 8 清单里的那一句话；界面结构依据 PRD 第三节：
 // 文件夹列表 + 材料列表 + 连续打卡天数。
@@ -6,6 +7,7 @@
 // 本文件只做两件事：① 决定现在该显示哪种状态；② 把数据铺到界面上。
 // 数据本身不在这里，在 src/mock/homeData.js。
 
+import { useState } from 'react'
 import homeData from '../mock/homeData.js'
 
 // ── 页面状态 ───────────────────────────────────────────
@@ -36,12 +38,31 @@ export default function Home({ onOpenMaterial, onGoNew }) {
 // ── 正常状态 ───────────────────────────────────────────
 
 function ReadyView({ data, onOpenMaterial, onGoNew }) {
+  // 当前选中的文件夹 id；'all' = 第一项「全部材料」
+  const [selectedFolderId, setSelectedFolderId] = useState('all')
+
+  const selectedFolder =
+    data.folders.find((f) => f.id === selectedFolderId) || data.folders[0]
+
+  // 「全部材料」看全部；其他文件夹按名字过滤
+  const visibleMaterials =
+    selectedFolder.id === 'all'
+      ? data.materials
+      : data.materials.filter((m) => m.folder === selectedFolder.name)
+
   return (
     <div className="page">
       <StatsCard streakDays={data.streakDays} monthDays={data.monthDays} />
-      <FolderCard folders={data.folders} materials={data.materials} onGoNew={onGoNew} />
-      <MaterialCard
+      <FolderCard
+        folders={data.folders}
         materials={data.materials}
+        selectedId={selectedFolder.id}
+        onSelect={setSelectedFolderId}
+        onGoNew={onGoNew}
+      />
+      <MaterialCard
+        materials={visibleMaterials}
+        folderName={selectedFolder.name}
         onOpenMaterial={onOpenMaterial}
         onGoNew={onGoNew}
       />
@@ -69,8 +90,8 @@ function StatsCard({ streakDays, monthDays }) {
   )
 }
 
-// 文件夹列表卡片
-function FolderCard({ folders, materials, onGoNew }) {
+// 文件夹列表卡片：点击切换当前文件夹
+function FolderCard({ folders, materials, selectedId, onSelect, onGoNew }) {
   return (
     <section className="card">
       <div className="card-head">
@@ -80,23 +101,34 @@ function FolderCard({ folders, materials, onGoNew }) {
         </button>
       </div>
       <ul className="folder-list">
-        {folders.map((folder, i) => (
-          <li key={folder.id} className={i === 0 ? 'folder-item active' : 'folder-item'}>
-            <span>{folder.name}</span>
-            <span className="muted">
-              {i === 0
-                ? materials.length
-                : materials.filter((m) => m.folder === folder.name).length}
-            </span>
-          </li>
-        ))}
+        {folders.map((folder) => {
+          const count =
+            folder.id === 'all'
+              ? materials.length
+              : materials.filter((m) => m.folder === folder.name).length
+          const active = folder.id === selectedId
+
+          return (
+            <li key={folder.id}>
+              <button
+                type="button"
+                className={active ? 'folder-item active' : 'folder-item'}
+                aria-pressed={active}
+                onClick={() => onSelect(folder.id)}
+              >
+                <span>{folder.name}</span>
+                <span className="muted">{count}</span>
+              </button>
+            </li>
+          )
+        })}
       </ul>
     </section>
   )
 }
 
-// 材料列表卡片
-function MaterialCard({ materials, onOpenMaterial, onGoNew }) {
+// 材料列表卡片：只显示当前文件夹下的材料
+function MaterialCard({ materials, folderName, onOpenMaterial, onGoNew }) {
   return (
     <section className="card">
       <div className="card-head">
@@ -105,18 +137,23 @@ function MaterialCard({ materials, onOpenMaterial, onGoNew }) {
           新建材料
         </button>
       </div>
-      <ul className="material-list">
-        {materials.map((m) => (
-          <li key={m.id} className="material-item">
-            <button className="material-open" onClick={() => onOpenMaterial(m)}>
-              <span className="material-title">{m.title}</span>
-              <span className="muted">
-                所属：{m.folder}　句段：{m.sentences}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+
+      {materials.length === 0 ? (
+        <p className="state-desc">「{folderName}」里还没有材料。</p>
+      ) : (
+        <ul className="material-list">
+          {materials.map((m) => (
+            <li key={m.id} className="material-item">
+              <button className="material-open" onClick={() => onOpenMaterial(m)}>
+                <span className="material-title">{m.title}</span>
+                <span className="muted">
+                  所属：{m.folder}　句段：{m.sentences}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }
