@@ -62,6 +62,14 @@ function ReadyView({ material }) {
           <span className="player-status">当前：第 1 句 / 共 {total} 句</span>
         </div>
 
+        {/* Day 14 修复：同伴实测点「播放」无反应，误以为「这条材料没有音频」。
+            原因不是没说明 —— 页面底部本来就有说明，但用户点了按钮没反应时，
+            视线停在按钮上，不会去看页面底部。所以把说明**移到卡住的现场**。
+            依据：Day 11「不许假成功」—— 没做完的功能必须说真话。 */}
+        <p className="player-hint">
+          播放、循环、录音功能还在开发中，现在点了不会有反应，不是你的材料有问题。
+        </p>
+
         <ul className="sentence-list">
           {SENTENCES.map((s) => (
             <li key={s.no} className={s.no === 1 ? 'sentence-item current' : 'sentence-item'}>
@@ -78,7 +86,7 @@ function ReadyView({ material }) {
         </ul>
       </div>
 
-      <p className="notice">Day 7 骨架版：句子是示例内容，播放与录音尚未接通。</p>
+      <p className="notice">当前是示例句子，第 3 周接入真实数据后会显示你自己材料的内容。</p>
     </div>
   )
 }

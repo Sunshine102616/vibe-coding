@@ -548,6 +548,19 @@ body {
   color: #1f2328;
 }
 
+/* Day 14：播放区的就地说明。
+   用提示色（同 .notice 的语义色），让它在按钮正下方被看见 ——
+   用户点按钮没反应时，视线就停在这块区域，不会再往下翻页面。 */
+.player-hint {
+  margin: 12px 0 16px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #7a5a12;
+  background: #fff8e6;
+  border: 1px solid #e0c98a;
+  border-radius: 6px;
+}
+
 /* ---------- 句子列表 ---------- */
 
 .sentence-list {
