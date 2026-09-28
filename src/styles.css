@@ -191,10 +191,20 @@ body {
   border-radius: 999px;
 }
 
+/* Day 15 修复（P2-8）：原为 padding 2px 8px / font-size 12px，实测高度约 20px，
+   远低于 DESIGN_RULES 第五节的最低档 32px —— 点击热区太小，同伴反馈「点了没反应」。
+   理由不是「不好看」，是 20px 的热区在触屏上真的容易点不中。
+   现按「小按钮」档：高度 32px（由 padding 6px 12px + 字号 13px 撑出），
+   颜色沿用幽灵按钮的蓝字蓝边。 */
 .filter-clear {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 12px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1;
   color: #2f6fd0;
   background: #ffffff;
   border: 1px solid #b9d2f2;

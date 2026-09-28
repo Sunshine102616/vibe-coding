@@ -208,6 +208,42 @@ curl -s "https://<envId>.service.tcloudbase.com/api/health"
 
 写接口前**先读 `api-contract.md`**，不要自己定字段。新增接口先在契约里登记占位，再实现。
 
+### G8. ⚠️ 工具环境坑（Day 15 反复踩，务必先读）
+
+**① Write 工具写 `/tmp/xxx` 会落到「当前盘符根目录」，不是 Git Bash 的临时目录**
+
+Day 15 写 Playwright 脚本时踩到：脚本 `Write` 到 `/tmp/pwtest/x.mjs`，
+实际落在 `D:\tmp\pwtest\x.mjs` —— 因为 Write 把 `/tmp` 当成了相对当前盘符的路径。
+而 Bash 里的 `/tmp` 是 Git Bash 映射的 `C:\Users\<用户>\AppData\Local\Temp`。
+两边指的不是同一个地方，于是「明明写了文件，`node` 却说找不到」。
+
+**正确做法**：临时脚本一律用**完整 Windows 路径**，不要用 `/tmp`：
+
+```
+C:/Users/Administrator/AppData/Local/Temp/pwtest/xxx.mjs
+```
+
+**② Playwright 必须装在项目外的独立目录**
+
+ESM（`.mjs`）**不认 `NODE_PATH`**，装在项目 `node_modules` 里会 `Cannot find module 'playwright'`。
+固定用 `C:/Users/Administrator/AppData/Local/Temp/pwtest/`，
+里面已有 `node_modules`（含 playwright + chromium），**直接复用，不要重装**。
+
+**③ 项目目录里绝不留临时脚本**
+
+Day 15 曾在项目根建了 `tmp-check-clear.mjs`，收尾时才发现并删除。
+脚本一律写在上面那个项目外目录。
+
+**④ 起开发服务器用完整路径的 node**
+
+```bash
+cd "D:/work place/vibe coding" && \
+  (C:/Users/Administrator/.workbuddy-ai/binaries/node/versions/22.22.2-3/node.exe \
+   node_modules/vite/bin/vite.js --port 5173 > /tmp/vite.log 2>&1 &)
+```
+
+不要用 `npm run dev` —— PowerShell 执行策略会拦 `npm.ps1`（见项目记忆）。
+
 ## 报告格式（固定）
 
 检查完**必须**按这个格式输出，不允许只说「已检查，没问题」：
