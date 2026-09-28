@@ -51,6 +51,8 @@ body {
 }
 
 .nav-btn {
+  display: inline-flex;
+  align-items: center;
   min-height: 36px;
   padding: 8px 14px;
   font-family: inherit;
@@ -59,6 +61,7 @@ body {
   background: #ffffff;
   border: 1px solid #d5d9de;
   border-radius: 6px;
+  text-decoration: none; /* Day 13：导航由 button 改为 a，去掉下划线 */
   cursor: pointer;
 }
 
@@ -66,10 +69,72 @@ body {
   background: #eef1f4;
 }
 
+.nav-btn:focus-visible {
+  outline: 2px solid #2f6fd0;
+  outline-offset: 2px;
+}
+
 .nav-btn.active {
   color: #ffffff;
   background: #2f6fd0;
   border-color: #2f6fd0;
+}
+
+/* ---------- 面包屑（Day 13 加练项） ---------- */
+
+.crumb-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.crumb-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.crumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.crumb-link {
+  color: #2f6fd0;
+  text-decoration: none;
+}
+
+.crumb-link:hover {
+  text-decoration: underline;
+}
+
+.crumb-link:focus-visible {
+  outline: 2px solid #2f6fd0;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 当前所在层级（不可点）：用正文色 + 500 字重表示「你在这里」 */
+.crumb-current {
+  color: #1f2328;
+  font-weight: 500;
+}
+
+.crumb-sep {
+  color: #626a74;
+}
+
+.crumb-back {
+  flex-shrink: 0;
 }
 
 /* ---------- 页面容器 ---------- */
@@ -260,6 +325,8 @@ body {
   margin: 0 -20px;
   font-family: inherit;
   text-align: left;
+  text-decoration: none; /* Day 13：本行由 button 改为 a */
+  color: inherit;
   background: none;
   border: 0;
   cursor: pointer;
@@ -267,6 +334,11 @@ body {
 
 .material-open:hover {
   background: #f8f9fb;
+}
+
+.material-open:focus-visible {
+  outline: 2px solid #2f6fd0;
+  outline-offset: -2px;
 }
 
 .material-title {
@@ -406,6 +478,9 @@ body {
 /* ---------- 按钮 ---------- */
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 36px;
   padding: 8px 16px;
   font-family: inherit;
@@ -414,7 +489,15 @@ body {
   background: #ffffff;
   border: 1px solid #d5d9de;
   border-radius: 6px;
+  /* Day 13：按钮由 button 改为 a 之后必须补这两条，
+     否则 a 是行内元素，min-height 不生效，而且会带下划线 */
+  text-decoration: none;
   cursor: pointer;
+}
+
+.btn:focus-visible {
+  outline: 2px solid #2f6fd0;
+  outline-offset: 2px;
 }
 
 .btn:hover {
@@ -542,6 +625,23 @@ body {
   margin: 0;
   font-size: 13px;
   color: #626a74;
+}
+
+/* 行内代码：用于显示「正确写法」这类可照抄的地址（Day 13） */
+.code-inline {
+  padding: 2px 6px;
+  font-size: 12px;
+  color: #1f2328;
+  background: #f1f3f6;
+  border: 1px solid #e3e6ea;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+/* 两条 state-desc 相邻时给一点间距（找不到材料页有「说明 + 正确写法」两行） */
+.state-desc + .state-desc {
+  margin-top: 8px;
 }
 
 .state-box .btn {

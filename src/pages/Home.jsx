@@ -10,6 +10,7 @@
 
 import { useState } from 'react'
 import homeData from '../mock/homeData.js'
+import { ROUTES, practicePath } from '../useHashRoute.js'
 
 // ── 页面状态 ───────────────────────────────────────────
 // 四种状态：loading 加载中 / empty 空 / error 错误 / ready 正常。
@@ -27,18 +28,20 @@ function readViewState() {
   return STATES.includes(value) ? value : 'ready'
 }
 
-export default function Home({ onOpenMaterial, onGoNew }) {
+// Day 13：不再接收 onOpenMaterial / onGoNew —— 导航改由地址栏哈希负责，
+// 页面内部的「去新建」「打开材料」都变成 <a href>，见下。
+export default function Home() {
   const state = readViewState()
 
   if (state === 'loading') return <LoadingView />
-  if (state === 'empty') return <EmptyView onGoNew={onGoNew} />
+  if (state === 'empty') return <EmptyView />
   if (state === 'error') return <ErrorView />
-  return <ReadyView data={homeData} onOpenMaterial={onOpenMaterial} onGoNew={onGoNew} />
+  return <ReadyView data={homeData} />
 }
 
 // ── 正常状态 ───────────────────────────────────────────
 
-function ReadyView({ data, onOpenMaterial, onGoNew }) {
+function ReadyView({ data }) {
   // 当前选中的文件夹 id；'all' = 第一项「全部材料」
   const [selectedFolderId, setSelectedFolderId] = useState('all')
 
@@ -66,7 +69,6 @@ function ReadyView({ data, onOpenMaterial, onGoNew }) {
         materials={data.materials}
         selectedId={selectedFolder.id}
         onSelect={setSelectedFolderId}
-        onGoNew={onGoNew}
       />
       <MaterialCard
         materials={visibleMaterials}
@@ -74,8 +76,6 @@ function ReadyView({ data, onOpenMaterial, onGoNew }) {
         isFiltering={isFiltering}
         totalCount={data.materials.length}
         onClearFilter={clearFilter}
-        onOpenMaterial={onOpenMaterial}
-        onGoNew={onGoNew}
       />
 
       <p className="notice">
@@ -102,14 +102,14 @@ function StatsCard({ streakDays, monthDays }) {
 }
 
 // 文件夹列表卡片：点击切换当前文件夹
-function FolderCard({ folders, materials, selectedId, onSelect, onGoNew }) {
+function FolderCard({ folders, materials, selectedId, onSelect }) {
   return (
     <section className="card">
       <div className="card-head">
         <h2>文件夹</h2>
-        <button className="btn btn-ghost" onClick={onGoNew}>
+        <a className="btn btn-ghost" href={ROUTES.new}>
           新建文件夹
-        </button>
+        </a>
       </div>
       <ul className="folder-list">
         {folders.map((folder) => {
@@ -150,8 +150,6 @@ function MaterialCard({
   isFiltering,
   totalCount,
   onClearFilter,
-  onOpenMaterial,
-  onGoNew,
 }) {
   return (
     <section className="card">
@@ -170,18 +168,18 @@ function MaterialCard({
             </button>
           </span>
         )}
-        <button className="btn btn-primary" onClick={onGoNew}>
+        <a className="btn btn-primary" href={ROUTES.new}>
           新建材料
-        </button>
+        </a>
       </div>
 
       {materials.length === 0 ? (
         <div className="empty-inline">
           <p className="state-desc">「{folderName}」里还没有材料。</p>
           <div className="empty-actions">
-            <button type="button" className="btn btn-small" onClick={onGoNew}>
+            <a className="btn btn-small" href={ROUTES.new}>
               往这里新建材料
-            </button>
+            </a>
             <button type="button" className="btn btn-small" onClick={onClearFilter}>
               查看全部材料（{totalCount}）
             </button>
@@ -191,12 +189,14 @@ function MaterialCard({
         <ul className="material-list">
           {materials.map((m) => (
             <li key={m.id} className="material-item">
-              <button className="material-open" onClick={() => onOpenMaterial(m)}>
+              {/* Day 13：改成 <a href="#/practice/1"> —— 打开材料变成一次真实导航，
+                  地址栏会变、刷新能恢复、可以右键复制链接。 */}
+              <a className="material-open" href={practicePath(m.id)}>
                 <span className="material-title">{m.title}</span>
                 <span className="muted">
                   所属：{m.folder}　句段：{m.sentences}
                 </span>
-              </button>
+              </a>
             </li>
           ))}
         </ul>
@@ -229,15 +229,15 @@ function LoadingView() {
 // ── 空状态 ─────────────────────────────────────────────
 // 新用户第一次打开看到的就是这一屏，所以要给出「下一步做什么」。
 
-function EmptyView({ onGoNew }) {
+function EmptyView() {
   return (
     <div className="page">
       <section className="card state-box">
         <p className="state-title">还没有任何材料</p>
         <p className="state-desc">新建一条材料，上传音频后就能开始逐句跟读。</p>
-        <button className="btn btn-primary" onClick={onGoNew}>
+        <a className="btn btn-primary" href={ROUTES.new}>
           去新建材料
-        </button>
+        </a>
       </section>
     </div>
   )

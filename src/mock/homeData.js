@@ -18,11 +18,23 @@ const homeData = {
   ],
 
   // 材料列表
+  // Day 13：id 改成字符串，因为练习页的地址是 #/practice/1 —— 从地址读出来的是字符串，
+  //         两边类型一致才不用到处 String() 转换（也避免 1 === '1' 为假的坑）。
   materials: [
-    { id: 1, title: 'Unit 1 Reading', folder: '课本音频', sentences: 12 },
-    { id: 2, title: 'Unit 2 Listening', folder: '课本音频', sentences: 9 },
-    { id: 3, title: 'VOA 慢速英语 0901', folder: '听力训练', sentences: 18 },
+    { id: '1', title: 'Unit 1 Reading', folder: '课本音频', sentences: 12 },
+    { id: '2', title: 'Unit 2 Listening', folder: '课本音频', sentences: 9 },
+    { id: '3', title: 'VOA 慢速英语 0901', folder: '听力训练', sentences: 18 },
   ],
+}
+
+// 按 id 找一条材料。找不到返回 null。
+//
+// Day 13 新增：练习页的地址带 id（#/practice/1），刷新或直接打开链接时，
+// 界面要靠这个函数把材料**重新找回来**，而不是记住「刚才点进去的那个对象」。
+// 第 3 周接 IndexedDB 时，这里改成异步查询即可，界面结构不用动。
+export function findMaterialById(id) {
+  if (id == null) return null
+  return homeData.materials.find((m) => m.id === String(id)) || null
 }
 
 export default homeData

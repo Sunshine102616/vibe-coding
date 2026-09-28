@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import homeData from '../mock/homeData.js'
+import { ROUTES } from '../useHashRoute.js'
 
 // 已有文件夹名字列表，用来判重。
 // 用 mock 数据而不是在本文件里另写一份，避免两处数据不一致 —— 第 3 周接真实数据时只改一处。
@@ -16,15 +17,16 @@ const EXISTING_NAMES = homeData.folders
 // 为什么需要这个：用户打「课」字时名字还没打完，立刻报错是把「还没输完」误判成「输错了」。
 const CHECK_DELAY = 400
 
-export default function NewMaterial({ onBack }) {
+// Day 13：不再接收 onBack —— 返回改由地址栏（面包屑 + 返回上一页）负责。
+export default function NewMaterial() {
   return (
     <div className="page">
       <div className="card">
         <div className="card-head">
           <h2>新建材料</h2>
-          <button className="btn btn-ghost" onClick={onBack}>
+          <a className="btn btn-ghost" href={ROUTES.home}>
             返回首页
-          </button>
+          </a>
         </div>
 
         <div className="field">
