@@ -1,0 +1,8 @@
+{
+  "name": "health",
+  "version": "1.0.0",
+  "description": "XingHo Read 健康检查云函数：只返回服务状态，不连数据库、不含业务逻辑",
+  "main": "index.js",
+  "private": true,
+  "dependencies": {}
+}

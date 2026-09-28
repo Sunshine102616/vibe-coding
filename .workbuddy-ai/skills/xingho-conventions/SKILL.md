@@ -118,6 +118,96 @@ npx impeccable@latest detect src/
 
 > 遇到新冲突：**先停下问用户**，不要自己选。选完把结论补进上表，避免下次重新讨论。
 
+## G. 云服务部署（Day 15 起，2026-09-28）
+
+第 3 周起项目联网。**改云函数、部署、调接口之前，先看这一组。**
+
+### G1. 环境信息（不要写进代码，写进笔记）
+
+| 项 | 值 |
+|---|---|
+| 环境 ID | `xingho-read-d0gamjt5d859dbd81` |
+| 云函数地址 | `https://xingho-read-d0gamjt5d859dbd81.service.tcloudbase.com` |
+| 静态托管地址 | `https://xingho-read-d0gamjt5d859dbd81-1497420413.tcloudbaseapp.com` |
+| 地域 | `ap-shanghai` |
+
+> ⚠️ **环境 ID 从截图上抄极易出错**（`t` 看成 `5`、`d` 看成 `x`，Day 15 实际发生过）。
+> **正确做法：用 `tcb env list` 的输出确认，不要靠读图。**
+
+### G2. ⚠️ 建新云函数：`cloudbaserc.json` 必须写 `type: "HTTP"`
+
+**这是 Day 15 折腾了四轮才找到的坑，Day 16 建新函数时第一时间就要对。**
+
+```json
+{
+  "version": "2.1",
+  "functions": [{
+    "name": "函数名",
+    "type": "HTTP",
+    "entry": "index.js",
+    "gatewayPath": "/api/xxx",
+    "public": true
+  }]
+}
+```
+
+| 现象 | 原因 |
+|---|---|
+| 公网报 `FunctionType parameter is invalid` | 函数被建成了 Event 型 |
+| `tcb fn detail` 里「Execution method」为空、Triggers 为 None | 同上 |
+| 命令行加了 `--httpFn` 也没用 | **`cloudbaserc.json` 优先级更高，会覆盖命令行参数** |
+| 配置里写了 `handler: "index.main"` | ⚠️ **`handler` 是 Event 函数的字段**，写了就会被判定为 Event |
+
+> **函数类型在创建时定死，后续更新改不了。建错只能删掉重建**（`tcb fn delete` + `tcb fn deploy`）。
+
+### G3. 网关会剥掉路径前缀
+
+`gatewayPath: "/api/health"` → 外部请求 `/api/health` 时，**函数内部收到的是 `/`**。
+
+```
+外部 /api/health       → 函数收到 "/"
+外部 /api/health/test  → 函数收到 "/test"
+```
+
+→ **函数内部判断路由时按「剥掉前缀后」的路径写**。稳妥做法：两个都认（`/` 和 `/api/health`），
+本地直连调试和线上就能跑同一份代码。
+
+### G4. 两种函数类型的写法差异
+
+| | Event 函数 | **HTTP 函数（本项目用这个）** |
+|---|---|---|
+| 入口 | `exports.main = (event, ctx) => {}` | `http.createServer()` + `server.listen(PORT)` |
+| 端口 | 平台代管 | **必须从 `process.env.PORT` 读**，不能写死 9000 |
+| 返回 | 返回对象 | `res.writeHead()` + `res.end()` |
+
+### G5. 常用命令
+
+```bash
+tcb env list -e <envId>                          # 确认环境（也用来核对环境 ID）
+tcb fn list -e <envId>                           # 函数列表
+tcb fn detail <name> -e <envId>                  # 函数详情（查 Execution method）
+tcb fn deploy <name> -e <envId>                  # 部署（配置写在 cloudbaserc.json，不用带参数）
+tcb fn delete <name> -e <envId>                  # 删除
+tcb hosting detail -e <envId>                    # 静态托管信息（拿公网域名）
+tcb hosting deploy ./dist -e <envId> --verify    # 部署前端，带校验
+```
+
+> `tcb login` 已在 Day 15 由用户完成，后续不需要重复授权。
+> **需要用户执行的命令一律用 CMD**（PowerShell 有执行策略限制，见项目记忆）。
+
+### G6. 部署后必须用外部请求验证
+
+**CLI 说「部署成功」只代表文件传上去了**，不代表能访问、能返回正确内容。
+Day 15 就出现过「部署成功但公网报错」的情况。
+
+```bash
+curl -s "https://<envId>.service.tcloudbase.com/api/health"
+```
+
+### G7. 接口约定以 `api-contract.md` 为准
+
+写接口前**先读 `api-contract.md`**，不要自己定字段。新增接口先在契约里登记占位，再实现。
+
 ## 报告格式（固定）
 
 检查完**必须**按这个格式输出，不允许只说「已检查，没问题」：

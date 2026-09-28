@@ -150,7 +150,11 @@ function buildNotFoundHint(materialId) {
   if (!materialId) {
     return {
       message: '这个地址没有指定要练哪条材料。',
-      example: 'localhost:5173/#/practice/1',
+      // Day 15 修复：原来写的是 'localhost:5173/#/practice/1'，在公网上会误导用户。
+      // 用相对路径而不是拼当前域名 —— 提示要教的是「路径怎么写」，
+      // 不是「访问哪个域名」。域名会变（本地 / 公网 / 以后可能换），
+      // 写相对路径本地和线上都对，这段文案以后不用再改。
+      example: '#/practice/1',
     }
   }
   return {

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "version": "2.1",
+  "envId": "xingho-read-d0gamjt5d859dbd81",
+  "region": "ap-shanghai",
+  "functionRoot": "./cloudfunctions",
+  "functions": [
+    {
+      "name": "health",
+      "description": "XingHo Read 健康检查：只返回服务状态，不连数据库",
+      "type": "HTTP",
+      "runtime": "Nodejs20.19",
+      "entry": "index.js",
+      "gatewayPath": "/api/health",
+      "timeout": 5,
+      "memorySize": 256,
+      "installDependency": false,
+      "public": true
+    }
+  ]
+}
