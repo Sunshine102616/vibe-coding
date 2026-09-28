@@ -574,9 +574,12 @@ body {
   border-bottom: 0;
 }
 
+/* 当前正在练的那一句：左侧色条 + 背景色双重提示。
+   标记「练到第几句」的状态，不是装饰；同项另有背景色变化，色条只作加强。
+   用户 2026-09-28 裁决保留。 */
 .sentence-item.current {
   background: #eef4fd;
-  border-left: 3px solid #2f6fd0;
+  border-left: 3px solid #2f6fd0; /* impeccable-disable-line side-tab */
 }
 
 .sentence-main {
