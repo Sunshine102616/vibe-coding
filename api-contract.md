@@ -180,6 +180,16 @@ GET /api/health
 
 ### 3.1 数据模型（先定字段，再定接口）
 
+> **✅ 已落地（Day 16）**：本节定义的三张表已经建成。
+> 建表语句见 `db/schema.sql`，种子数据见 `db/seed.sql`。
+>
+> ⚠️ **本节描述的是「接口返回的字段」（camelCase），数据库列名用的是 `snake_case`**：
+> 数据库 `folder_id` → 接口 `folderId`；`created_at` → `createdAt`；`start_ms` → `startMs`。
+> 转换在 Day 17 写接口时用 SQL 的 `AS` 别名完成，**前端契约不用改**。
+>
+> ⚠️ **另注意：`sentenceCount` 在数据库里没有对应列** ——
+> 它是 Day 17 用 `COUNT()` 从 `sentences` 表算出来的，不是存起来的。
+
 **材料（Material）** —— 对应 PRD 里的「一条练习素材」
 
 | 字段 | 类型 | 必填 | 说明 |
