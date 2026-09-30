@@ -244,6 +244,61 @@ cd "D:/work place/vibe coding" && \
 
 不要用 `npm run dev` —— PowerShell 执行策略会拦 `npm.ps1`（见项目记忆）。
 
+## H. 数据库（Day 16 起，2026-09-30）
+
+**环境**：CloudBase **PostgreSQL**（环境是「**PG 模式**」，创建环境时定死、事后改不了）。
+**三张表**：`folders` / `materials` / `sentences`，都在 `public` schema。
+**脚本**：`db/schema.sql`（建表）、`db/seed.sql`（种子）。
+
+### H1. 控制台入口是「SQL 型数据库」
+
+左侧菜单点「**SQL 型数据库**」，**不是**「数据库」。
+里面有 SQL 编辑器、表数据页、Schema 可视化。
+
+### H2. 写 SQL 脚本的两条硬规矩
+
+| 规矩 | 做法 | 为什么 |
+|---|---|---|
+| 建表可重复执行 | 全部 `CREATE TABLE IF NOT EXISTS` | 重跑不报错 |
+| 种子可重复执行 | `INSERT ... ON CONFLICT (主键) DO NOTHING` | 重跑不报错、不重复插 |
+
+⚠️ `DO NOTHING` 的副作用：**改了数据重跑不生效**，要先 `DELETE` 再跑（顺序：子表先删）。
+
+### H3. schema 设计约定（Day 16 已定，改动前先问）
+
+| 项 | 约定 |
+|---|---|
+| 列名 | **`snake_case`**（`folder_id` / `created_at` / `start_ms`） |
+| id 类型 | **`text`**（与前端契约一致，如 `'1'`、`'textbook'`） |
+| 时间列 | `timestamptz NOT NULL DEFAULT now()` |
+| 外键列 | 要建索引（如 `idx_materials_folder_id`） |
+| 删除策略 | 句段表 `ON DELETE CASCADE`；材料表**不加**（保守，防误删文件夹） |
+| 数据校验 | `CHECK (end_ms > start_ms)` |
+
+### H4. 契约字段 ≠ 数据库列
+
+- 数据库 `folder_id` → 接口 `folderId`（Day 17 用 SQL `AS` 别名转）
+- **`sentenceCount` 没有对应列** → Day 17 用 `COUNT()` 算，不要加列
+
+### H5. ⚠️ 权限：GRANT + RLS 双层（Day 17 前必须配）
+
+表建好后控制台标「**无 RLS**」且无 GRANT。用管理员身份（控制台）能看到数据，
+但**云函数不是管理员身份，没 GRANT 一行都读不到**。
+
+- 第一层：表级 `GRANT`（能对表做什么操作）
+- 第二层：行级 RLS Policy（能看哪些行）—— 两层都过才成功
+- 本期无账号系统 → 若走 `service_role`（自带 `BYPASSRLS`），**可能只需 GRANT**
+
+详见 `待办清单.md` **P0-5**。
+
+### H6. 常见坑
+
+| 坑 | 正解 |
+|---|---|
+| SQL 编辑器里粘了**文件名** `db/schema.sql` | 报 `syntax error at or near "db"`。要粘**文件内容** |
+| `CREATE TABLE` 显示「影响 0 行」 | 正常，DDL 是结构变更，不涉及行数 |
+| 找不到数据库入口 | 是「**SQL 型数据库**」，不是「数据库」 |
+
 ## 报告格式（固定）
 
 检查完**必须**按这个格式输出，不允许只说「已检查，没问题」：
