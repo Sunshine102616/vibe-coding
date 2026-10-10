@@ -7,15 +7,18 @@
   "functions": [
     {
       "name": "health",
-      "description": "XingHo Read 健康检查：只返回服务状态，不连数据库",
+      "description": "XingHo Read API：健康检查 + 读接口（folders / materials）",
       "type": "HTTP",
       "runtime": "Nodejs20.19",
       "entry": "index.js",
-      "gatewayPath": "/api/health",
-      "timeout": 5,
+      "gatewayPath": "/api",
+      "timeout": 10,
       "memorySize": 256,
-      "installDependency": false,
-      "public": true
+      "installDependency": true,
+      "public": true,
+      "envVariables": {
+        "CLOUDBASE_ENV_ID": "xingho-read-d0gamjt5d859dbd81"
+      }
     }
   ]
 }

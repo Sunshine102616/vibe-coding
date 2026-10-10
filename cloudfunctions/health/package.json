@@ -1,7 +1,7 @@
 {
   "name": "health",
   "version": "1.0.0",
-  "description": "XingHo Read 健康检查云函数：只返回服务状态，不连数据库、不含业务逻辑",
+  "description": "XingHo Read API 云函数：健康检查 + 业务接口（走 CloudBase HTTP API 读写 PostgreSQL）",
   "main": "index.js",
   "private": true,
   "dependencies": {}
