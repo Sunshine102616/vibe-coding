@@ -1,3 +1,6 @@
 .env
 node_modules/
 dist/
+
+# 本地部署配置（含密钥，绝不提交）
+cloudbaserc.local.json
