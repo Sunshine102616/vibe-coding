@@ -102,4 +102,68 @@ function readBody(req, maxBytes = 64 * 1024) {
   })
 }
 
-module.exports = { send, ok, fail, readBody }
+// ── 读 + 解析 JSON 请求体（Day 22 新增）──────────────────────
+
+/**
+ * 造一个「带 HTTP 语义」的错误，给 readJsonBody 用。
+ *
+ * 为什么错误对象上要带 status / error：**让调用方能一行翻译成响应**。
+ *   调用方（index.js）只要 `fail(res, err.status, err.error, err.message)` 就行，
+ *   不用自己判断「这是 413 还是 400」。
+ * ⚠️ 只有 readJsonBody 自己造的错误才有 `isRequestError` ——
+ *    调用方靠它区分「用户输入不对（该回 4xx）」和「程序出错了（该回 500）」。
+ */
+function requestError(status, error, message) {
+  const err = new Error(message)
+  err.status = status
+  err.error = error
+  err.isRequestError = true
+  return err
+}
+
+/**
+ * 把请求体读进来、解析成 JSON 对象。**三步都做，任一步失败就抛错。**
+ *
+ *   ① 读流（超过 64 KB → 413）
+ *   ② 解析 JSON（不是合法 JSON → 400）
+ *   ③ 确认是对象（数组 / null / 数字 → 400）
+ *
+ * 【为什么第 ③ 步也要拦】
+ *   合法的 JSON 不等于我们要的东西。`[1,2,3]` 是合法 JSON，但它没有字段可读；
+ *   后面 `body.name` 会得到 undefined，错误会跑到很远的地方才暴露。
+ *   **在门口拦掉，比在里面猜要省事得多。**
+ *
+ * 【为什么单独抽这个函数】
+ *   原来 `createFolder` 里内联了这三步（约 15 行）。
+ *   现在多了 `updateFolder` 也要读请求体 —— 再抄一遍就会有两份
+ *   「大小上限是多少、错误文案怎么写的」需要同步维护。
+ *
+ * @returns {Promise<object>} 解析好的请求体对象
+ * @throws {Error} 带 status / error / message / isRequestError 的错误
+ */
+async function readJsonBody(req) {
+  let raw
+  try {
+    raw = await readBody(req)
+  } catch (err) {
+    if (err.tooLarge) {
+      throw requestError(413, 'PAYLOAD_TOO_LARGE', '提交的内容太大了')
+    }
+    throw err
+  }
+
+  let body
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    throw requestError(400, 'BAD_REQUEST', '请求体不是合法的 JSON')
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw requestError(400, 'BAD_REQUEST', '请求体必须是一个 JSON 对象')
+  }
+
+  return body
+}
+
+module.exports = { send, ok, fail, readBody, readJsonBody }

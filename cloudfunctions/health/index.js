@@ -3,10 +3,12 @@
  *
  * 【它现在做什么】
  *   一个 HTTP 服务，按路径分发到不同接口：
- *     GET  /api/health     健康检查（不查数据库）
- *     GET  /api/folders    文件夹列表
- *     POST /api/folders    新建文件夹
- *     GET  /api/materials  材料列表（可按文件夹筛选、可限条数）
+ *     GET   /api/health        健康检查（不查数据库）
+ *     GET   /api/folders       文件夹列表
+ *     POST  /api/folders       新建文件夹
+ *     PATCH /api/folders/:id   改文件夹名字（Day 22 新增）
+ *     DELETE /api/folders/:id  删一个文件夹（Day 22 新增）
+ *     GET   /api/materials     材料列表（可按文件夹筛选、可限条数）
  *
  * 【为什么还叫 health 这个名字】
  *   云函数的**名字**在创建时定死，改名要删掉重建。
@@ -65,12 +67,12 @@
  * 只能拆成两次请求在内存里数，那部分的说明在 repo.js。
  *
  * 【今天不做什么】
- *   修改/删除接口（PATCH、DELETE）留到第 4 周；RLS 行级权限也还没配。
+ *   DELETE 接口（板块② 做）、批量操作、用户系统；RLS 行级权限也还没配。
  */
 
 const http = require('http')
 const repo = require('./repo')
-const { send, ok, fail, readBody } = require('./http-utils')
+const { send, ok, fail, readBody, readJsonBody } = require('./http-utils')
 
 // 平台通过环境变量注入端口；本地调试兜底用 9000
 const PORT = process.env.PORT || 9000
@@ -227,6 +229,124 @@ async function createFolder(req, res) {
   }
 }
 
+// ── 接口 5：修改文件夹（Day 22 新增）──────────────────────────
+
+/**
+ * PATCH /api/folders/:id —— 改文件夹名字
+ *
+ * 【为什么 id 在地址里，不在请求体里】
+ *   地址里的 `:id` 回答「**改哪一条**」，请求体里的字段回答「**改成什么**」。
+ *   这两件事分开，语义才清楚：
+ *       PATCH /folders/news   { "name": "新闻英语" }    ← 把 news 改成「新闻英语」
+ *   如果 id 也塞进请求体，就变成「给你一个 id 和一个名字，你自己猜我想干嘛」——
+ *   多一个字段，就多一处可能写错。
+ *
+ * 【只允许改 name】
+ *   见 `repo.updateFolder` 的说明：id 是所有材料关联文件夹的依据，不能改。
+ *
+ * 【「改」特有的错误（和「增」不一样）】
+ *   1. **改一个不存在的 id → 必须 404。**
+ *      这里如果回 200，前端会以为改成功了，刷新一看没变 —— 这叫**静默成功**，
+ *      比报错难查得多。⚠️ 新增时「目标不存在」是正常的；修改时「目标不存在」是错误。
+ *   2. **name 为空 / 超长 → 400**，在进数据库之前就挡掉（不然会先写脏数据）。
+ *   3. **请求体不是对象 → 400**（由 readJsonBody 负责，见 http-utils.js）。
+ */
+async function updateFolder(req, res, id) {
+  // ── 第 1 步：读 + 解析请求体 ─────────────────────────────
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    // isRequestError = 「用户输入不对」→ 该回 4xx，用错误自带的状态码和文案
+    if (err.isRequestError) {
+      return fail(res, err.status, err.error, err.message)
+    }
+    throw err   // 其它 = 程序出错了 → 交给 route 的兜底回 500
+  }
+
+  // ── 第 2 步：校验 name ──────────────────────────────────
+  // 先 trim 再判断 —— 全是空格的名字等于没填
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+
+  if (!name) {
+    return fail(res, 400, 'BAD_REQUEST', '文件夹名称不能为空')
+  }
+  if (name.length > 30) {
+    return fail(res, 400, 'BAD_REQUEST', '文件夹名称最多 30 个字符')
+  }
+
+  // ── 第 3 步：写入 ──────────────────────────────────────
+  const folder = await repo.updateFolder({ id, name })
+
+  // null = 没有这个 id（repo 层不碰 HTTP，所以用 null 表达「没这条」）
+  if (!folder) {
+    return fail(res, 404, 'NOT_FOUND', `没有找到 id 为「${id}」的文件夹`)
+  }
+
+  // 写操作记一条 —— 事后能回答「这个名字是谁改的」
+  console.log(`[api] 修改文件夹成功：id=${folder.id} name=${folder.name}`)
+
+  // 200 而不是 201：**没有创建新资源，只是改了现有的**
+  ok(res, { folder })
+}
+
+// ── 接口 6：删除文件夹（Day 22 新增）──────────────────────────
+
+/**
+ * DELETE /api/folders/:id —— 删一个文件夹
+ *
+ * 【删除为什么比新增更容易出事】三条，全都体现在这个函数里：
+ *   1. **不可逆** —— 新增错了能删掉；删除错了数据就没了。
+ *      （本期是**真删**，没有软删除 —— 软删除是加练项。）
+ *   2. **有连带影响** —— 文件夹里的材料会怎样？
+ *      → 数据库**故意不允许**删还有材料的文件夹（外键挡着，见 `repo.deleteFolder`）。
+ *   3. **容易「静默成功」** —— 删一个不存在的 id 如果回 200，
+ *      调用方会以为删掉了，实际什么都没发生。→ **必须 404**。
+ *
+ * 【「确认」加在哪 —— 三层，从不可绕过到说人话】
+ *   ① **数据库层**：外键约束。**这是最后一道防线，也是唯一不可绕过的一道** ——
+ *      就算应用层写错了，数据库也不会让材料变孤儿。
+ *   ② **业务层（repo）**：被数据库拦下来**之后**才去数「有几条」，
+ *      把数字带回来。⚠️ 顺序是「先让数据库裁决，再补说明」，不是反过来。
+ *   ③ **接口层（这里）**：把三种结果翻译成 200 / 404 / 409，并且**说人话**。
+ *
+ * 【为什么没有请求体】
+ *   「删哪一条」全在地址里。DELETE 虽然允许带 body，但语义混乱、
+ *   而且不少代理/网关会把它丢掉 —— 所以**这里不读 body**。
+ */
+async function deleteFolder(req, res, id) {
+  const result = await repo.deleteFolder(id)
+
+  // ── 情况一：删掉了 ────────────────────────────────────────
+  if (result.deleted) {
+    // 写操作单独记一条。**删除尤其要记** —— 它是不可逆的动作，
+    // 事后必须能回答「这条是什么时候、被谁删的」。
+    console.log(`[api] 删除文件夹成功：id=${result.folder.id} name=${result.folder.name}`)
+
+    // 200 并把删掉的那条回给调用方（不是 204 空响应）：
+    // 契约 1.4 要求「所有接口都返回 JSON」，前端也能据此显示「已删除「课本音频」」。
+    return ok(res, { folder: result.folder })
+  }
+
+  // ── 情况二：本来就没有这条 → 404 ──────────────────────────
+  // ⚠️ 绝不能回 200。回 200 就是**静默成功**：前端以为删了，其实什么都没发生。
+  //    「删不存在的 id」和「删存在的 id」，调用方必须能分出来。
+  if (result.reason === 'not-found') {
+    return fail(res, 404, 'NOT_FOUND', `没有找到 id 为「${id}」的文件夹`)
+  }
+
+  // ── 情况三：里面还有材料 → 409 ────────────────────────────
+  // 409 CONFLICT = 「你的请求没写错，但**数据现在的状态**不允许这么做」。
+  // ⚠️ 不是 400（参数没错），也不是 500（服务器没坏）—— **读者不同，处理方式就不同**。
+  // 提示语里带上**具体条数**：光说「不能删」，用户不知道下一步该干嘛。
+  return fail(
+    res,
+    409,
+    'CONFLICT',
+    `「${result.name}」里还有 ${result.materialCount} 条材料，先把它们移走或删掉，再删这个文件夹`
+  )
+}
+
 // ── 路由分发 ─────────────────────────────────────────────────
 
 /**
@@ -263,6 +383,36 @@ async function route(pathname, url, req, res) {
         await createFolder(req, res)
         return true
       }
+      fail(res, 405, 'METHOD_NOT_ALLOWED', `这个接口不支持 ${method} 请求`)
+      return true
+    }
+
+    // ── 带路径参数的路径：/folders/<id>（Day 22 新增）──────────
+    // 【为什么需要单独一段】上面那种 `pathname === '/folders'` 是**精确比较**，
+    //   匹配不上 `/folders/news`。带参数的路径必须用正则。
+    //
+    // 【正则怎么读】
+    //   ^\/(?:api\/)?folders\/([^/]+)$
+    //     (?:api\/)?   可选的 `api/` 前缀 —— 本地调试有、过网关后没有（见文件头说明）
+    //     ([^/]+)      捕获 id，**至少一个非斜杠字符**
+    //                  → 所以 `/folders/`（id 为空）匹配不上，会落到最后返回 404
+    //                  → 所以 `/folders/a/b` 也匹配不上（id 里不能有斜杠）
+    const folderIdMatch = pathname.match(/^\/(?:api\/)?folders\/([^/]+)$/)
+    if (folderIdMatch) {
+      // id 可能是百分号编码过的（比如中文），解回来再用
+      const id = decodeURIComponent(folderIdMatch[1])
+
+      if (method === 'PATCH') {
+        await updateFolder(req, res, id)
+        return true
+      }
+
+      if (method === 'DELETE') {
+        await deleteFolder(req, res, id)
+        return true
+      }
+
+      // 路径对、方法不对 —— 和其它接口一样回 405
       fail(res, 405, 'METHOD_NOT_ALLOWED', `这个接口不支持 ${method} 请求`)
       return true
     }

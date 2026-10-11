@@ -3,10 +3,12 @@
 // ============================================================
 //
 // 【这个文件做什么】
-//   把「读写数据库」收成三个函数，给**数据访问层（repo.js）**用：
-//     select(table, options)   查一张表，返回行数组
-//     insert(table, row)       往表里插一行，返回插进去的那行
-//     count(table, filter)     数一张表有多少行
+//   把「读写数据库」收成五个函数，给**数据访问层（repo.js）**用：
+//     select(table, options)           查一张表，返回行数组
+//     insert(table, row)               往表里插一行，返回插进去的那行
+//     update(table, filter, patch)     改符合条件的行，返回改完的行数组（Day 22 新增）
+//     remove(table, filter)            删符合条件的行，返回被删掉的行数组（Day 22 新增）
+//     count(table, filter)             数一张表有多少行
 //
 //   ⚠️ 它是**最底下那层**：只懂「怎么跟数据库说话」，不懂业务。
 //      这个文件里不该出现「文件夹」「句段数」这类词 ——
@@ -120,7 +122,14 @@ function request({ method = 'GET', path, body, prefer }) {
             const detail = (json && (json.message || json.error)) || text.slice(0, 200)
             const err = new Error(`HTTP ${res.statusCode}：${detail}`)
             err.status = res.statusCode
-            err.code = json && json.code
+            // ⚠️ **CloudBase 网关会给 SQLSTATE 加一个 `DATABASE_` 前缀**（Day 22 实测）：
+            //      23503 → 'DATABASE_23503'      42501 → 'DATABASE_42501'
+            //    这里把前缀剥掉，让上层拿到**标准的 PostgreSQL SQLSTATE**。
+            //    不剥的话，上层写 `err.code === '23503'` 永远不成立，
+            //    外键冲突会被当成 500 抛出去 —— Day 22 就踩了这个坑。
+            //    （用 replace 而不是 slice：万一将来网关不加前缀了，这行也不用改。）
+            err.code = json && json.code ? String(json.code).replace(/^DATABASE_/, '') : undefined
+            err.rawCode = json && json.code   // 原始值留一份，排查时用
             err.body = json
             reject(err)
             return
@@ -212,7 +221,91 @@ async function insert(table, row) {
   return Array.isArray(json) ? json[0] : json
 }
 
-// ── 对外 3：数一张表有多少行 ────────────────────────────────
+// ── 对外 3：改表里符合条件的行（Day 22 新增）────────────────
+
+/**
+ * 改一行（或几行）。PostgREST 的 PATCH。
+ *
+ * @param {string} table
+ * @param {object} filter 等值过滤，**必须传** —— 不传就会改全表
+ * @param {object} patch  要改的列，如 { name: '新名字' }
+ * @returns {Promise<Array>} 改完后的行数组
+ *
+ * 【为什么返回数组，而不是「改好的那一行」】
+ *   **0 行**和「改了 0 个字段」是两回事：
+ *     返回 `[]`   → 条件没匹配到任何行 → 调用方该回 **404**（这条不存在）
+ *     返回 `[{}]` → 匹配到了，也改了
+ *   如果这里直接把 `json[0]` 返回出去，调用方就**分不清「没这条」和「改成功了」** ——
+ *   会变成「改一个不存在的 id 也报成功」。这正是「删除/修改比新增更容易出事」的地方：
+ *   **静默成功**。所以这一层故意把「有没有匹配到」原样交给上层判断。
+ *
+ * 【为什么带 Prefer: return=representation】
+ *   和 insert 一样 —— 不加的话 PostgREST 只回状态码、不回数据体，
+ *   我们就拿不到改完之后的真实值（也就无法判断到底改到没有）。
+ *
+ * ⚠️ filter 传空对象时，PostgREST 会**改整张表**。调用方（repo.js）必须保证传了 id。
+ */
+async function update(table, filter = {}, patch) {
+  const qs = new URLSearchParams()
+  for (const [key, value] of Object.entries(filter)) {
+    if (value === undefined || value === null) continue
+    qs.set(key, `eq.${value}`)
+  }
+  const query = qs.toString()
+
+  const { json } = await request({
+    method: 'PATCH',
+    path: `/v1/rdb/rest/${encodeURIComponent(table)}${query ? `?${query}` : ''}`,
+    body: patch,
+    prefer: 'return=representation',
+  })
+
+  return Array.isArray(json) ? json : []
+}
+
+// ── 对外 4：删表里符合条件的行（Day 22 新增）────────────────
+
+/**
+ * 删一行（或几行）。PostgREST 的 DELETE。
+ *
+ * @param {string} table
+ * @param {object} filter 等值过滤，**必须传** —— 不传就会**清空整张表**
+ * @returns {Promise<Array>} 被删掉的那些行
+ *
+ * 【为什么也返回数组】
+ *   和 update 同理：**`[]` 表示「没有匹配到任何行」**，
+ *   也就是「你让我删的这条根本不存在」→ 上层该回 **404**。
+ *   如果把「没删到」和「删掉了」都当成成功，就会变成
+ *   **「删一个不存在的 id 也报成功」** —— 前端以为删了，其实什么都没发生。
+ *
+ * 【为什么带 Prefer: return=representation】
+ *   默认 PostgREST 的 DELETE **只回状态码、不回数据体**。
+ *   不加这个头，我们就**没法知道到底删掉了几行** —— 只能看状态码猜。
+ *   加上之后，删掉的行会作为响应体返回，`rows.length` 就是真实删除数。
+ *
+ * ⚠️ 外键冲突会 reject（`err.code === '23503'`）：
+ *   比如删一个「里面还有材料」的文件夹 —— `materials.folder_id` 指向它，
+ *   数据库会**拒绝删除**。这是**故意的**（见 db/schema.sql 的说明），
+ *   调用方要把 23503 翻译成「不能删，里面有东西」，而不是当成 500。
+ */
+async function remove(table, filter = {}) {
+  const qs = new URLSearchParams()
+  for (const [key, value] of Object.entries(filter)) {
+    if (value === undefined || value === null) continue
+    qs.set(key, `eq.${value}`)
+  }
+  const query = qs.toString()
+
+  const { json } = await request({
+    method: 'DELETE',
+    path: `/v1/rdb/rest/${encodeURIComponent(table)}${query ? `?${query}` : ''}`,
+    prefer: 'return=representation',
+  })
+
+  return Array.isArray(json) ? json : []
+}
+
+// ── 对外 5：数一张表有多少行 ────────────────────────────────
 
 /**
  * 数一张表符合条件的行数。
@@ -251,4 +344,4 @@ async function count(table, filter = {}) {
   return Number.isFinite(total) ? total : 0
 }
 
-module.exports = { select, insert, count, request }
+module.exports = { select, insert, update, remove, count, request }
