@@ -307,6 +307,25 @@ const server = http.createServer(async (req, res) => {
     )
   })
 
+  // ── 跨域预检请求（OPTIONS）────────────────────────────────
+  // 【这是什么】浏览器在发「POST + JSON」这种请求之前，会**先发一个 OPTIONS 探路**：
+  //   「我准备用 POST、带 Content-Type: application/json 打你这个地址，行不行？」
+  //   答完这一句，浏览器才发真正的请求。
+  //
+  // 【为什么要在函数里处理】网关会把 OPTIONS **转发给函数**，
+  //   所以函数必须接住它 —— 否则会掉进路由、返回 404，让预检失败。
+  //   这里不用跑业务逻辑（不查库、不校验），回 204（成功无内容）就够。
+  //
+  // ⚠️ CORS 响应头**不在这里加** —— 网关会加，两套会冲突成非法值。
+  //    实测记录见 http-utils.js 的「跨域」注释块。
+  // ⚠️ 漏了这个分支，POST 接口在浏览器里**直接失败**，而用 curl 测却是好的
+  //    （curl 不发预检）—— 这是最容易被骗过去的一类 bug。
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
+
   // 注意把 req 也传进去 —— POST 接口要读请求体，body 挂在 req 上
   const handled = await route(url.pathname, url, req, res)
 

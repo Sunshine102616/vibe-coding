@@ -17,6 +17,26 @@
 //   收完之后是 JSON 还是表单、字段对不对，都是调用方的事。
 // ============================================================
 
+// ── 跨域（CORS）：由网关处理，函数**不要**自己加 ──────────────
+//
+// 【踩过的坑（Day 20 实测）】
+//   一开始在函数里加了 `Access-Control-Allow-Origin: *` 等头，结果线上响应变成：
+//       access-control-allow-origin: http://localhost:5173,*
+//   —— 网关**自己也会加** CORS 头，两套拼在一起成了**非法值**，
+//   浏览器判定不匹配，跨域直接失败。**加了反而更糟。**
+//
+// 【实测结论：网关全包】撤掉函数里的 CORS 头之后，网关单独提供（GET / OPTIONS / POST 都测过）：
+//       access-control-allow-origin: <回显请求的 Origin>
+//       access-control-allow-credentials: true
+//       access-control-allow-methods: <预检请求里的那个方法>
+//       access-control-allow-headers: Content-Type
+//       vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
+//   而且它做得比我们更对：**回显 Origin**（不是 `*`，这样才能配 credentials）、
+//   预检只允许请求的那一个方法、还带了 `vary`（缓存正确性）。
+//
+// 【所以】函数这边只需要在 index.js 里把 OPTIONS 回一个 204 —— 见那里的说明。
+//   ⚠️ 将来若换了部署方式（不经过这个网关），这里要**重新验证**一遍。
+
 /**
  * 发一个 JSON 响应。
  *
