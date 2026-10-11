@@ -19,7 +19,7 @@
 
 // ── 跨域（CORS）：由网关处理，函数**不要**自己加 ──────────────
 //
-// 【踩过的坑（Day 20 实测）】
+// 【踩过的坑（Day 19 追加② 实测）】
 //   一开始在函数里加了 `Access-Control-Allow-Origin: *` 等头，结果线上响应变成：
 //       access-control-allow-origin: http://localhost:5173,*
 //   —— 网关**自己也会加** CORS 头，两套拼在一起成了**非法值**，

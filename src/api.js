@@ -1,4 +1,4 @@
-// 前端调后端接口的统一入口（Day 20 新增）
+// 前端调后端接口的统一入口（Day 19 追加② 新增）
 //
 // 【为什么要单独一个文件】
 //   接口地址、请求方式、错误处理**只写一处** —— 组件里只管「我要什么数据」。
@@ -16,6 +16,27 @@
 //   cloudfunctions/health/http-utils.js 的实测记录）。前端这边不用做任何事。
 
 const BASE_URL = 'https://xingho-read-d0gamjt5d859dbd81.service.tcloudbase.com/api'
+
+// ── 最近一次响应里带的服务器时间（加练 · Day 20）────────────────
+//
+// 契约 1.4 规定每个响应都带一个 `time` 字段（服务器生成响应那一刻的时间）。
+// 平时它是「调试用的元信息」，用不上；**「最后更新时间」正好就是它** ——
+// 界面上的数据是「什么时候从服务器取回来的」，这个字段就是最准的答案
+// （比在前端用 new Date() 取本地时间准：本地时钟可能不准，而且异步请求有延迟）。
+//
+// 为什么用模块级变量而不是让 request() 返回整个 body：
+//   `request()` 现在的契约是「成功返回 data」，调用方拿到的就是能直接用的数据。
+//   为了一个附加信息把它改成 `{ data, time }`，会让**所有调用点都要改** ——
+//   而真正需要 time 的只有一个地方。**不动主契约，另开一个小出口**，代价最小。
+let lastUpdatedAt = null
+
+/**
+ * 取「数据最后更新时间」—— 最近一次接口响应里带的服务器时间（ISO 字符串）。
+ * 还没成功请求过时返回 null。
+ */
+export function getLastUpdatedAt() {
+  return lastUpdatedAt
+}
 
 /**
  * 发一个请求，并解开统一的响应格式。
@@ -48,6 +69,9 @@ async function request(path, options) {
     // 接口自己说失败了 —— message 已经是写好的中文，直接用
     throw new Error(body.message || `请求失败（HTTP ${res.status}）`)
   }
+
+  // 记下服务器时间，供「最后更新时间」显示（加练 · Day 20）
+  lastUpdatedAt = body.time || null
 
   return body.data
 }

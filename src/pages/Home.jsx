@@ -1,4 +1,4 @@
-// 首页 —— Day 20｜接真实数据（从数据库读，不再用假数据）
+// 首页 —— Day 19 追加②｜接真实数据（从数据库读，不再用假数据）
 //
 // 【今天改了什么】
 //   以前：`import homeData from '../mock/homeData.js'`，数据是写死在文件里的。
@@ -24,8 +24,20 @@
 // 【界面结构没变】依旧依据 PRD 第三节：文件夹列表 + 材料列表 + 连续打卡天数。
 
 import { useCallback, useEffect, useState } from 'react'
-import { fetchFolders, fetchMaterials } from '../api.js'
+import { fetchFolders, fetchMaterials, getLastUpdatedAt } from '../api.js'
 import { ROUTES, practicePath } from '../useHashRoute.js'
+
+// 把服务器时间（ISO 字符串）显示成人看得懂的样子。
+//
+// ⚠️ 接口给的 time 是 **UTC**（结尾带 Z），`new Date()` 会按**浏览器所在时区**换算，
+//    所以这里直接 toLocaleString 就是对的，不要自己去加 8 小时。
+// 出错时返回 '—' 而不是 "Invalid Date" —— 界面上不该出现英文报错。
+function formatUpdatedAt(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('zh-CN', { hour12: false })
+}
 
 // 「全部材料」不是数据库里的真实文件夹，是界面上的「看全部」入口。
 // 接口**不会**返回它（契约 2.2），所以由页面自己造一个，固定排第一。
@@ -39,6 +51,8 @@ export default function Home() {
   const [folders, setFolders] = useState([])
   const [materials, setMaterials] = useState([])
   const [errorMessage, setErrorMessage] = useState('')
+  // 加练 · Day 20：数据最后更新时间（来自接口响应里的 time 字段）
+  const [updatedAt, setUpdatedAt] = useState(null)
 
   // useCallback：把 load 函数本身固定下来，好让下面的 useEffect 只在首次挂载时跑一次。
   // 不包的话每次渲染都是新函数，effect 会反复触发 → 无限请求。
@@ -52,6 +66,8 @@ export default function Home() {
       ])
       setFolders(folderResult.folders || [])
       setMaterials(materialResult.materials || [])
+      // 两个请求都成功了才读时间 —— getLastUpdatedAt() 给的是「最近一次」响应的时间
+      setUpdatedAt(getLastUpdatedAt())
       setStatus('ready')
     } catch (err) {
       // api.js 抛出来的 message 已经是写好的中文，直接拿来给用户看。
@@ -73,12 +89,12 @@ export default function Home() {
   //    知道「东西在别的文件夹里」，而不是一屏「还没有任何材料」。
   if (folders.length === 0 && materials.length === 0) return <EmptyView />
 
-  return <ReadyView folders={folders} materials={materials} />
+  return <ReadyView folders={folders} materials={materials} updatedAt={updatedAt} />
 }
 
 // ── 正常状态 ───────────────────────────────────────────
 
-function ReadyView({ folders, materials }) {
+function ReadyView({ folders, materials, updatedAt }) {
   // 当前选中的文件夹 id；'all' = 第一项「全部材料」
   const [selectedFolderId, setSelectedFolderId] = useState('all')
 
@@ -131,6 +147,14 @@ function ReadyView({ folders, materials }) {
           含糊的说明等于没有说明，用户会自己猜，而且通常猜错（Day 14 的教训）。 */}
       <p className="notice">
         文件夹和材料已经是从数据库读出来的真实数据。打卡统计还没接后端，先固定显示 0。
+      </p>
+
+      {/* 加练 · Day 20：一个迷你「检查台」——
+          把「接口通不通」和「这批数据是什么时候取的」摊开写在页面上。
+          页面看着不对时，先看这一行：接口正常说明问题在前端，时间不对说明读到的是旧数据。
+          ⚠️ 时间是**服务器**给的（接口响应里的 time），不是本地时钟 —— 本地时钟可能不准。 */}
+      <p className="state-desc">
+        云端接口正常　·　数据最后更新：{formatUpdatedAt(updatedAt)}（刷新页面会重新读取）
       </p>
     </div>
   )

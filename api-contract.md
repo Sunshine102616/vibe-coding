@@ -39,7 +39,8 @@
 | **页面（前端）** | `https://xingho-read-d0gamjt5d859dbd81-1497420413.tcloudbaseapp.com` | ✅ 已上线（Day 15） |
 
 **这两个不是同一个域名** —— 前端在 A 域名、后端在 B 域名，跨域问题由此而来。
-**本期不配置 CORS**（按 Day 15 清单，跨域是 Day 20 的事）。
+**✅ 跨域已解决（Day 19 追加②）—— 而且什么都不用配**：CORS 响应头由**腾讯云网关自动提供**，
+函数里加反而会拼成非法值。详见第五节。
 
 ### 1.2 路径规则
 
@@ -516,28 +517,39 @@ PATCH /api/folders
 
 ---
 
-## 五、跨域（CORS）—— 今天不配，Day 20 配
+## 五、跨域（CORS）—— ✅ 已解决（Day 19 追加②），结论是「**什么都不用配**」
 
-**这是个一定会遇到的问题，提前说清楚。**
+> **本节原来写的是「今天不配，Day 20 配」。实际结果是：腾讯云网关自己全包了，一行都不用配。**
+> ⚠️ 这里的「Day 20」是 **Day 15 清单里的原计划编号**，和后来那次误用自造编号的提交 `3f1194e` 不是一回事。
 
 **问题是什么**：前端在 `tcloudbaseapp.com`，后端在 `service.tcloudbase.com` —— **两个不同的域名**。
-
 浏览器的安全策略规定：**不同域名之间发请求，默认被拦截**，除非后端明确说「我允许那个域名来访问」。
 
-**表现出来是这样**：
+**实际测下来（Day 19 追加②）**：网关自动返回完整的一套跨域头，而且比手写的更对：
+
+| 请求 | 网关自动给的 |
+|---|---|
+| `GET` 带 `Origin` | `access-control-allow-origin: <回显请求的 Origin>`、`access-control-allow-credentials: true`、`vary: Origin` |
+| `OPTIONS` 预检 | `204` + `allow-origin` 回显 + `allow-methods: <请求的那个方法>` + `allow-headers: Content-Type` + `vary: Origin,Access-Control-Request-Method,Access-Control-Request-Headers` |
+
+**⚠️ 关键结论：函数里一个 CORS 头都不要加。**
+一开始按常规做法在函数里加了 `Access-Control-Allow-Origin: *`，线上响应头立刻变成**非法值**：
 
 ```
-Access to fetch at 'https://...service.tcloudbase.com/api/materials'
-from origin 'https://...tcloudbaseapp.com' has been blocked by CORS policy
+access-control-allow-origin: http://localhost:5173,*
 ```
 
-**什么时候会遇到**：Day 17 前端第一次去调真实接口时，**必现**。
+—— 网关的（回显 Origin）和我们的（`*`）**拼在了一起**，浏览器判定不匹配，跨域反而失败。
+撤掉函数里的头之后一切正常。**这是做过对照实验确认的，不是推测。**
 
-**怎么解决**（Day 20 做）：在云函数的 HTTP 访问服务里配置允许的来源。**今天不配**（清单明确列为「今日不做」）。
+**但有一件事必须做**：`OPTIONS` 预检请求**网关会转发给函数**，函数必须接住回 `204`
+（见 `cloudfunctions/health/index.js` 的 OPTIONS 分支），否则会掉进路由返回 404、预检失败。
 
-> **为什么现在不改前端去绕开**：
-> 前端能用的绕法（比如走代理）都是临时手段，会掩盖问题；
-> 而且 CORS 是**服务端该管的事**，前端绕过去等于把问题藏起来。
+> ⚠️ **这个坑最阴的地方**：`curl` **不发预检**，所以用 curl 测全是好的，
+> 只有真正在浏览器里才会失败。**跨域问题不能只靠 curl 验证。**
+
+**什么时候会真的遇到**：前端第一次去调真实接口时 —— 实际发生在 **Day 19 追加②（首页接真数据）**，
+`GET /api/folders` 与 `GET /api/materials` 在浏览器里直接调通，未做任何额外配置。
 
 ---
 
