@@ -1,11 +1,11 @@
 /**
- * 云函数：health —— 现在承载 XingHo Read 的全部 API
+ * 云函数：health —— XingHo Read 的 API 入口
  *
  * 【它现在做什么】
  *   一个 HTTP 服务，按路径分发到不同接口：
  *     GET  /api/health     健康检查（不查数据库）
  *     GET  /api/folders    文件夹列表
- *     POST /api/folders    新建文件夹（Day 18 新增）
+ *     POST /api/folders    新建文件夹
  *     GET  /api/materials  材料列表（可按文件夹筛选、可限条数）
  *
  * 【为什么还叫 health 这个名字】
@@ -13,13 +13,28 @@
  *   为了不破坏 Day 15 已上线的健康检查地址，保留函数名，
  *   但职责已经从「只做健康检查」扩成「承载全部 API」。
  *
- * 【Day 17 新增了什么】
- *   两个读接口。它们从 PostgreSQL 读真实数据 ——
- *   Day 16 建的三张表第一次被接口读出来。
+ * ────────────────────────────────────────────────────────────
+ * 【Day 19 做了分层重构 —— 先看这段，再改代码】
  *
- * 【今天不做什么】
- *   修改/删除接口（PATCH、DELETE）留到第 4 周；RLS 行级权限也还没配。
- *   ⚠️ 排查用的临时端点 GET /api/debug 已在 Day 18 收尾时删除。
+ * 原来这个文件里混着三件事：路由、业务规则、查数据库。
+ * 拆成四层，**每层只干一件事**：
+ *
+ *   index.js       接口层        路由分发、参数校验、组装响应
+ *   repo.js        数据访问层    按业务取数据（文件夹 / 材料）
+ *   db.js          数据库客户端  拼查询参数、发 HTTPS、解析错误
+ *   http-utils.js  通用 HTTP 工具  send / ok / fail / readBody
+ *
+ * 【怎么判断拆得对不对 —— 三句话】
+ *   index.js 里**不该出现数据库列名**（folder_id / created_at）
+ *   repo.js  里**不该出现 HTTP**（req / res / 状态码）
+ *   db.js    里**不该出现业务词**（文件夹 / 句段数）
+ *
+ * 【「查数据库」那段代码从哪移到了哪（Day 19 的核心问题）】
+ *   原来 getFolders / getMaterials / createFolder 三个函数里，
+ *   直接调 select / insert，还在内存里数材料数、数句段数，
+ *   再把数据库的 snake_case 转成接口要的 camelCase。
+ *   **这些全部移到 repo.js。**
+ *   现在这三个处理函数只剩：读参数 → 校验 → 调 repo → 发响应。
  *
  * ────────────────────────────────────────────────────────────
  * 【为什么是这个写法（Day 15 踩过坑，别改）】
@@ -45,48 +60,20 @@
  *
  * 原本写的是 pg 直连（自己建连接池、写 SQL）。部署前在控制台发现
  * **共享集群不提供外网地址**，云函数够不着数据库，直连作废。
- *
  * 现在走 CloudBase HTTP API（PostgREST），访问逻辑全在 db.js 里。
- * 代价是：**写不了 SQL**，只能拼查询参数。
- * 所以下面两处算法跟原计划不一样：
- *   1. folders 的 count  —— 原来一条带 GROUP BY 的 SQL 就够，
- *      现在要「先取文件夹，再逐个数字段」。
- *   2. sentenceCount 同理。
- * 数据量小（5 个文件夹 / 6 条材料）时这点开销无所谓；
- * 将来材料多到几百条，这里要改成在数据库里建视图（记进待办）。
+ * 代价是**写不了 SQL**，只能拼查询参数 —— 所以「数材料数 / 数句段数」
+ * 只能拆成两次请求在内存里数，那部分的说明在 repo.js。
+ *
+ * 【今天不做什么】
+ *   修改/删除接口（PATCH、DELETE）留到第 4 周；RLS 行级权限也还没配。
  */
 
 const http = require('http')
-const { select, insert, count } = require('./db')
+const repo = require('./repo')
+const { send, ok, fail, readBody } = require('./http-utils')
 
 // 平台通过环境变量注入端口；本地调试兜底用 9000
 const PORT = process.env.PORT || 9000
-
-// ── 响应工具 ─────────────────────────────────────────────────
-
-/**
- * 发一个 JSON 响应。
- * Content-Length 按**字节**算，不是字符串长度 ——
- * 中文一个字占 3 字节，用 length 会算少，响应会被截断。
- */
-function send(res, status, payload) {
-  const body = JSON.stringify(payload)
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-  })
-  res.end(body)
-}
-
-/** 成功响应：统一 { ok, data, time }（契约 1.4） */
-function ok(res, data) {
-  send(res, 200, { ok: true, data, time: new Date().toISOString() })
-}
-
-/** 失败响应：统一 { ok, error, message, time }（契约 1.4） */
-function fail(res, status, error, message) {
-  send(res, status, { ok: false, error, message, time: new Date().toISOString() })
-}
 
 // ── 接口 1：健康检查 ──────────────────────────────────────────
 
@@ -110,42 +97,14 @@ function getHealth(res) {
 /**
  * GET /api/folders
  *
- * 返回全部文件夹。**不含 'all'（全部材料）** ——
- * 那是前端造出来的「看全部」入口，不是数据库里的真实记录。
+ * 只做一件事：问 repo 要数据，包一层发给前端。
  *
- * 每个文件夹带一个 `count`（里面有几条材料）。
- * 因为 HTTP API 不能写 JOIN/GROUP BY，只能：
- *   ① 取全部文件夹
- *   ② 取全部材料（只要 folder_id 一列，省流量）
- *   ③ 在服务器内存里数一遍
- * 数据量小时这样最省事。
+ * **不含 'all'（全部材料）** —— 那是前端造出来的「看全部」入口，
+ * 不是数据库里的真实记录。
  */
 async function getFolders(res) {
-  const [folders, materials] = await Promise.all([
-    // ⚠️ 排序必须加 id 做次序键（Day 18 修的）：
-    //    seed 数据里 5 个文件夹的 created_at **完全相同**，
-    //    只按 created_at 排序时数据库返回顺序是**不保证的** ——
-    //    实测带 limit 的查询会返回 2、1 这种乱序。
-    //    加上 id.asc 后顺序才是确定的。
-    select('folders', { select: 'id,name,created_at', order: 'created_at.asc,id.asc' }),
-    select('materials', { select: 'folder_id' }),
-  ])
-
-  // 先把材料按文件夹分组数好，避免对每个文件夹都扫一遍数组
-  const countByFolder = new Map()
-  for (const m of materials) {
-    countByFolder.set(m.folder_id, (countByFolder.get(m.folder_id) || 0) + 1)
-  }
-
-  // 列名转换：数据库的 created_at → 接口的 createdAt（契约 3.1）
-  const data = folders.map((f) => ({
-    id: f.id,
-    name: f.name,
-    count: countByFolder.get(f.id) || 0,
-    createdAt: f.created_at,
-  }))
-
-  ok(res, { folders: data })
+  const folders = await repo.listFolders()
+  ok(res, { folders })
 }
 
 // ── 接口 3：材料列表 ──────────────────────────────────────────
@@ -155,20 +114,11 @@ async function getFolders(res) {
  *   ?folderId=textbook   按文件夹筛选（不传或传 all = 取全部）
  *   ?limit=3             限制返回条数（1–100）
  *
- * 两个要点：
- *
- * 1. 一条材料要带「有几个句段」（sentenceCount）
- *    数据库没有这一列，得从 sentences 表数出来。
- *    直连方案里用一条 LEFT JOIN + count() 就能算，
- *    但 HTTP API 不能写 JOIN，只能：
- *      ① 取材料列表
- *      ② 取这些材料的句段（只要 material_id 一列）
- *      ③ 在内存里数
- *    ⚠️ 注意：**没有句段的材料也要出现**（句段数 0）。
- *       所以第 ② 步的结果为空时，材料本身照样返回。
- *
- * 2. limit 必须校验
- *    来自用户输入，不能信。非整数、越界一律 400。
+ * 【校验为什么留在这里，不放进 repo】
+ *   「limit 必须是 1–100 的整数」是**这个接口的规矩**，
+ *   不是「数据本身的性质」—— 别的调用方（比如将来的后台任务）
+ *   想一次取 500 条是合理的。
+ *   凡是「用户输入不可信」的判断，都属于接口层。
  */
 async function getMaterials(res, url) {
   const folderId = url.searchParams.get('folderId')
@@ -184,91 +134,22 @@ async function getMaterials(res, url) {
     limit = n
   }
 
-  // ── 取材料 ───────────────────────────────────────────────
-  // filter 里放 undefined 表示不筛，db.js 会自动跳过
-  const materials = await select('materials', {
-    select: 'id,title,folder_id,audio_url,created_at',
-    filter: folderId && folderId !== 'all' ? { folder_id: folderId } : {},
-    // 加 id 做次序键 —— 理由同 getFolders（created_at 全相同，单排它不定序）
-    order: 'created_at.asc,id.asc',
-    limit,
-  })
+  const materials = await repo.listMaterials({ folderId, limit })
 
-  // ── 数每个材料的句段数 ────────────────────────────────────
-  // 一次取回全部句段的 material_id，在内存里分组
-  const sentences = await select('sentences', { select: 'material_id' })
-  const sentenceCountByMaterial = new Map()
-  for (const s of sentences) {
-    sentenceCountByMaterial.set(
-      s.material_id,
-      (sentenceCountByMaterial.get(s.material_id) || 0) + 1
-    )
-  }
-
-  const data = materials.map((m) => ({
-    id: m.id,
-    title: m.title,
-    folderId: m.folder_id,
-    audioUrl: m.audio_url,
-    sentenceCount: sentenceCountByMaterial.get(m.id) || 0,
-    createdAt: m.created_at,
-  }))
-
-  // data 里再包一层 materials，而不是直接给数组 ——
+  // 再包一层 materials，而不是直接给数组 ——
   // 将来要加 total / hasMore 时有地方放，不用改结构（契约 3.3 的理由）
-  ok(res, { materials: data })
+  ok(res, { materials })
 }
 
-// 说明：count() 目前两个接口都没用上，先留着（Day 18 分页要它）。
-// 保留它还有个作用 —— 它验证了「响应头 Content-Range 能读到总数」这条路是通的。
-void count
-
-// ── 接口 4：新建文件夹（Day 18 新增）─────────────────────────
-
-/**
- * 把请求体读成一个字符串。
- *
- * 【为什么要自己读】
- *   Node 的 http 请求体是**流**（一段一段来的），不像 Express 那样
- *   自动帮你收好、还帮你解析 JSON。原生写法要自己收。
- *
- * 【为什么要有大小上限】
- *   如果客户端一直发、我们一直收，内存会被撑爆。
- *   超过 64 KB 就拒绝 —— 一个文件夹只有两个短字段，64 KB 绰绰有余。
- *   （将来传音频是走文件存储，**不经过这里**，见契约第四节。）
- *
- * @returns {Promise<string>} 请求体的原始文本
- */
-function readBody(req, maxBytes = 64 * 1024) {
-  return new Promise((resolve, reject) => {
-    let size = 0
-    const chunks = []
-
-    req.on('data', (chunk) => {
-      size += chunk.length
-      if (size > maxBytes) {
-        const err = new Error('请求体超出大小限制')
-        err.tooLarge = true
-        reject(err)
-        req.destroy()
-        return
-      }
-      chunks.push(chunk)
-    })
-
-    // 按 utf8 拼 —— 中文一个字 3 字节，用二进制拼完再解码才不会断字
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-    req.on('error', (err) => reject(err))
-  })
-}
+// ── 接口 4：新建文件夹 ────────────────────────────────────────
 
 /**
  * POST /api/folders —— 新建一个文件夹
  *
- * 【这个接口今天要防的两种错】
+ * 【这个接口要防的两种错】
  *
  * 1. **重复提交**（同一个 id 发两次）
- *    → 交给数据库的主键约束拦，返回 409 CONFLICT。
+ *    → repo 会原样抛出数据库的 409，这里翻译成人话。
  *    ⚠️ 不用「先查有没有、没有就插」—— 两个请求同时来会一起通过检查、
  *       一起插入，这叫**竞态条件**。让数据库当裁判才是唯一可信的。
  *
@@ -323,24 +204,17 @@ async function createFolder(req, res) {
 
   // ── 第 4 步：写入 ────────────────────────────────────────
   try {
-    const row = await insert('folders', { id, name })
+    const folder = await repo.createFolder({ id, name })
 
     // 写操作单独记一条 —— 读请求记了「打了哪个接口」，
     // 写请求还要记「写进去了什么」，否则事后无法回答
     // 「用户说建了、库里的这一行到底是谁建的」。
-    console.log(`[api] 新建文件夹成功：id=${row.id} name=${row.name}`)
+    console.log(`[api] 新建文件夹成功：id=${folder.id} name=${folder.name}`)
 
     // 201 Created：明确表示「新建了一个资源」（契约 3.4）
     send(res, 201, {
       ok: true,
-      data: {
-        folder: {
-          id: row.id,
-          name: row.name,
-          count: 0,                   // 新文件夹里当然没有材料
-          createdAt: row.created_at,  // 数据库生成的，从插入结果里读回来
-        },
-      },
+      data: { folder },
       time: new Date().toISOString(),
     })
   } catch (err) {
@@ -358,8 +232,8 @@ async function createFolder(req, res) {
 /**
  * 根据**路径 + 请求方法**找对应的处理函数。
  *
- * 【为什么现在要看方法（Day 18 新增）】
- *   同一个路径 /api/folders 现在有两种用法：
+ * 【为什么要看方法】
+ *   同一个路径 /api/folders 有两种用法：
  *     GET  → 取列表
  *     POST → 新建
  *   只看路径不够了，必须连方法一起判断。
