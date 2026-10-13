@@ -715,22 +715,6 @@ body {
   color: #626a74;
 }
 
-/* ---------- 回滚演练横幅（Day 26 板块③，演练结束随回滚一起消失） ---------- */
-/* ⚠️ 这不是产品功能，是「故意做坏的版本」的标记 —— 让「线上跑的是不是坏版本」
-   变成一个肉眼可判的事实。配色取自 DESIGN_RULES 第二节「语义色 · 错误」，
-   间距取自第三节刻度（12 / 16）。 */
-
-.drill-banner {
-  margin: 0;
-  padding: 12px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #a32d2d;
-  background: #fdf7f7;
-  border: 1px solid #e8bcbc;
-  border-radius: 8px;
-}
-
 .notice {
   margin: 0;
   padding: 12px 16px;

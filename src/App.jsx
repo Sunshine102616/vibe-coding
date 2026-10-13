@@ -21,7 +21,7 @@ import { findMaterialById } from './mock/homeData.js'
 // 没有它就只能靠肉眼比对页面内容，不可靠。
 //
 // 抽成常量：板块③要造一个「坏版本 v1.1」，只需改这一行，不用到处找。
-const APP_VERSION = 'v1.1'
+const APP_VERSION = 'v1.0'
 
 // 导航标签：可访问性（Skill C 组）
 //   ① 用 <nav> 而不是 <div>，屏幕阅读器才知道这是导航区
