@@ -725,6 +725,23 @@ body {
   border-radius: 8px;
 }
 
+/* ---------- 页脚（Day 26） ---------- */
+/* 作用：把版本号写在页面上，发布/回退后一眼能确认「公网跑的是哪一版」。
+   配色取自 DESIGN_RULES 第二节（次要文字 #626a74），
+   间距取自第三节刻度（区块间距 32 / 分隔线内边距 16）。 */
+
+.app-footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid #eef1f4;
+  text-align: center;
+}
+
+.app-version {
+  font-size: 13px;
+  color: #626a74;
+}
+
 /* ---------- 移动端（≤ 600px） ---------- */
 /* 规则 R8：窄屏不得出现横向滚动条 */
 

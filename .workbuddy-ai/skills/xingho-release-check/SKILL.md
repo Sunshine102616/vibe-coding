@@ -253,13 +253,28 @@ curl -s --max-time 25 "$API/folders" | grep -oE '"id":"[^"]*"|"name":"[^"]*"'
 #### R4-16　远端没有备份垃圾
 
 ```bash
-tcb hosting list 2>&1 | grep -i "cloudbase-backup"
-curl -s -o /dev/null -w "%{http_code}\n" "$SITE/.cloudbase-backup/"
+# ⚠️ 只能用 download 查 —— list 和 curl 都看不见它（Day 26 实测证伪了旧写法）
+TMP="C:/Users/Administrator/.workbuddy-ai/tmp/bk"
+rm -rf "$TMP"
+tcb hosting download .cloudbase-backup "$TMP" --dir >/dev/null 2>&1
+ls "$TMP"          # 列出残留的备份时间戳目录；无输出 = 干净
 ```
 
-- **通过判据：没有 `.cloudbase-backup/`。**
-- 它从哪来：`tcb hosting deploy --safe` 的副作用，**不会自动清理**（Day 20 / 24 各留了一个）。
-- CLI 若不列目录，用第二条 `curl` 探测。
+- **通过判据：`ls "$TMP"` 无输出。**有输出就是 N 个残留 → 报 FAIL，并把时间戳列出来。
+- 它从哪来：`tcb hosting deploy --safe` 的副作用，**不会自动清理**。
+- ⚠️ **本项旧写法（Day 25 版）是橡皮图章，Day 26 实跑时被证伪** —— 它那两条命令都「看起来干净」：
+
+  | 命令 | 实测行为（Day 26） |
+  |---|---|
+  | `tcb hosting list` / `list --json` | **看不到点目录** —— 实测 `"total": 16`，`.cloudbase-backup/` 一条不列；加路径前缀还报 `No files found under path` |
+  | `curl "$SITE/.cloudbase-backup/"` | **404** —— 该目录下没有 `index.html`，**404 不代表不存在** |
+  | `curl "$SITE/.cloudbase-backup/<时间戳>/index.html"` | **200** —— 垃圾确实在，只是必须先知道时间戳 |
+  | **`tcb hosting download .cloudbase-backup <tmp> --dir`** | ✅ **能完整列出并下载** —— Day 26 靠它揪出 **4 个**残留 |
+
+- **顺带查清（对回滚有用）**：每个 `.cloudbase-backup/<时间戳>/` 是一份**整站快照**
+  （`index.html` + `assets/` + `__auth/` + `cloud-admin/`），**不是只有 `index.html`**。
+  → 它**可以**当作一条回滚素材（下载后原样重新 deploy），见 `回滚手册.md`。
+- 清理命令 `tcb hosting delete .cloudbase-backup --dir` —— ⚠️ **尚未实测验证**，执行前先确认它删的是预期范围。
 
 ### R5　文档
 
@@ -350,10 +365,17 @@ R1–R5 照跑但只作参考，**不得因为「其他都过了」就放行**�
 
 ## 已知的调用问题
 
-**新建的 Skill 在「当前会话」加载不了。** 技能发现机制在**会话启动时扫描一次**磁盘，
-之后只查表 —— 所以本 Skill 若是本次会话里刚创建的，用 Skill 工具会返回「找不到」。
+**本 Skill 永远只能用「降级调用」—— 它放在项目级目录，而项目级目录不在技能扫描范围内。**
 
-**这不是故障，是机制的正常行为**（Day 12 首次调用 `xingho-conventions` 时已查清，见 `Skill调用记录.md`）。
+**Day 26 实测确认**（这条悬了很久的疑问到此结案）：
+**开了一个全新会话**，直接调 `Skill("xingho-release-check")`，返回
+`Can not find skill: "xingho-release-check"` —— 也就是说**不只是「本会话新建的加载不了」**，
+而是**项目级 `.workbuddy-ai/skills/` 从头到尾就不被扫描**（只认用户级 `~/.workbuddy-ai/skills/`）。
 
-**处置**：加载不了时**不要停下** —— 手动 Read 本文件，按上面的清单**执行一遍**，
+> Day 12 时只查到「会话启动时扫描一次磁盘，之后只查表」，据此推测「开新会话就好」。
+> **Day 26 证伪了这个推测**：开新会话仍然找不到。
+> 教训：`待办清单.md` 里挂着的「待验证」项，**要真的去验一次**，不能一直挂着当已知。
+
+**处置**：**每次都手动 Read 本文件，按清单执行一遍**，
 并在 `Skill调用记录.md` 追加一节留证（写清「降级调用」及原因）。
+若哪天想让 `Skill` 工具直接加载，**把本目录复制到用户级 `~/.workbuddy-ai/skills/` 下**（未验证）。

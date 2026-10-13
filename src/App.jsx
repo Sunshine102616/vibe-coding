@@ -14,6 +14,15 @@ import Practice from './pages/Practice.jsx'
 import { ROUTES, practicePath, useHashRoute } from './useHashRoute.js'
 import { findMaterialById } from './mock/homeData.js'
 
+// 应用版本号（Day 26）
+//
+// 为什么要写在界面上：发布后要能一眼回答「公网上跑的到底是哪一版」。
+// 回退演练时全靠它判断「现在是坏版本还是好版本」——
+// 没有它就只能靠肉眼比对页面内容，不可靠。
+//
+// 抽成常量：板块③要造一个「坏版本 v1.1」，只需改这一行，不用到处找。
+const APP_VERSION = 'v1.0'
+
 // 导航标签：可访问性（Skill C 组）
 //   ① 用 <nav> 而不是 <div>，屏幕阅读器才知道这是导航区
 //   ② 用 <a href> 而不是 <button>：地址会被浏览器原生支持（中键新开标签、右键复制链接）
@@ -60,6 +69,11 @@ export default function App() {
           <Practice material={currentMaterial} materialId={route.id} />
         )}
       </main>
+
+      {/* 页脚版本标识（Day 26）：发布后靠它确认公网跑的是哪一版 */}
+      <footer className="app-footer">
+        <span className="app-version">XingHo Read {APP_VERSION}</span>
+      </footer>
     </div>
   )
 }
