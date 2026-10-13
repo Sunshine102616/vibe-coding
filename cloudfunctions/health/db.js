@@ -77,6 +77,44 @@ const TIMEOUT = 8000
  *   失败时 **reject 一个带 status 的 Error**，调用方可以据此分辨
  *   「重复了（409）」还是「真出错了（500）」。
  */
+/**
+ * 把数据库层的报错翻译成一句**中文人话**（Day 23 新增）。
+ *
+ * 【为什么要有它】
+ *   PostgREST 返回的 message 是英文的，例如
+ *     `permission denied for table folders`
+ *     `update or delete on table "folders" violates foreign key constraint ...`
+ *   直接塞给用户就是「裸报错」。这里按 SQLSTATE / HTTP 状态码翻成中文。
+ *
+ * 【为什么先看 code，再看状态码】
+ *   同一个 HTTP 状态码可能对应很多种原因（409 既可能是唯一约束、也可能是外键），
+ *   而 SQLSTATE 是**精确的**。所以先按 code 认，认不出来再用状态码兜底。
+ *
+ * ⚠️ 这一层**只说数据库发生了什么**，不说业务词（不提「文件夹」「材料」）——
+ *    业务翻译是 repo.js / index.js 的事（分层要求，见 架构说明.md）。
+ *
+ * @param {number} statusCode  HTTP 状态码
+ * @param {string|undefined} code  已剥掉 DATABASE_ 前缀的 PostgreSQL SQLSTATE
+ * @returns {string} 中文描述
+ */
+function describeDbError(statusCode, code) {
+  switch (code) {
+    case '23505': return '数据库拒绝了这次写入：这条记录已经存在（唯一约束冲突）'
+    case '23503': return '数据库拒绝了这次操作：还有关联数据在引用它（外键约束）'
+    case '23502': return '数据库拒绝了这次写入：有必填字段是空的'
+    case '42501': return '数据库拒绝了这次操作：没有对应的权限'
+    case '42P01': return '数据库里没有这张表'
+    default: break
+  }
+
+  if (statusCode === 401 || statusCode === 403) {
+    return `数据库拒绝了这次操作：认证信息无效或权限不足（HTTP ${statusCode}）`
+  }
+  if (statusCode === 404) return '数据库里没有找到对应的表或资源（HTTP 404）'
+  if (statusCode >= 500) return `数据库服务出错了（HTTP ${statusCode}）`
+  return `数据库返回了一个错误（HTTP ${statusCode}）`
+}
+
 function request({ method = 'GET', path, body, prefer }) {
   return new Promise((resolve, reject) => {
     if (!API_KEY) {
@@ -111,7 +149,10 @@ function request({ method = 'GET', path, body, prefer }) {
               json = JSON.parse(text)
             } catch {
               // 网关自己出错时可能回 HTML（比如 502），不是 JSON
-              reject(new Error(`接口返回的不是 JSON（HTTP ${res.statusCode}）：${text.slice(0, 200)}`))
+              const err = new Error(`数据库返回的不是 JSON（HTTP ${res.statusCode}）`)
+              err.status = res.statusCode
+              err.rawMessage = text.slice(0, 200)   // 原文片段留一份，排查时用
+              reject(err)
               return
             }
           }
@@ -119,17 +160,26 @@ function request({ method = 'GET', path, body, prefer }) {
           if (res.statusCode < 200 || res.statusCode >= 300) {
             // PostgREST 的错误体形如 { code, message, details, hint }
             // code 是 PostgreSQL 的 SQLSTATE，如 23505 = 唯一约束冲突
-            const detail = (json && (json.message || json.error)) || text.slice(0, 200)
-            const err = new Error(`HTTP ${res.statusCode}：${detail}`)
-            err.status = res.statusCode
+            //
             // ⚠️ **CloudBase 网关会给 SQLSTATE 加一个 `DATABASE_` 前缀**（Day 22 实测）：
             //      23503 → 'DATABASE_23503'      42501 → 'DATABASE_42501'
             //    这里把前缀剥掉，让上层拿到**标准的 PostgreSQL SQLSTATE**。
             //    不剥的话，上层写 `err.code === '23503'` 永远不成立，
             //    外键冲突会被当成 500 抛出去 —— Day 22 就踩了这个坑。
             //    （用 replace 而不是 slice：万一将来网关不加前缀了，这行也不用改。）
-            err.code = json && json.code ? String(json.code).replace(/^DATABASE_/, '') : undefined
-            err.rawCode = json && json.code   // 原始值留一份，排查时用
+            const code = json && json.code ? String(json.code).replace(/^DATABASE_/, '') : undefined
+
+            // ⚠️ 【Day 23 修】这里原来把 PostgREST 的**英文原文**直接塞进 message：
+            //      `HTTP 401：permission denied for table folders`
+            //    这是「裸报错」—— 一旦漏到用户面前，用户看到的就是一句英文天书。
+            //    现在：message 说人话（中文），英文原文挪到 err.rawMessage 留着排查。
+            const rawMessage = (json && (json.message || json.error)) || text.slice(0, 200)
+
+            const err = new Error(describeDbError(res.statusCode, code))
+            err.status = res.statusCode
+            err.code = code
+            err.rawCode = json && json.code      // 原始值留一份，排查时用
+            err.rawMessage = rawMessage          // 英文原文留一份，排查时用
             err.body = json
             reject(err)
             return

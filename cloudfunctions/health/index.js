@@ -24,7 +24,7 @@
  *   index.js       接口层        路由分发、参数校验、组装响应
  *   repo.js        数据访问层    按业务取数据（文件夹 / 材料）
  *   db.js          数据库客户端  拼查询参数、发 HTTPS、解析错误
- *   http-utils.js  通用 HTTP 工具  send / ok / fail / readBody
+ *   http-utils.js  通用 HTTP 工具  send / ok / fail / readJsonBody
  *
  * 【怎么判断拆得对不对 —— 三句话】
  *   index.js 里**不该出现数据库列名**（folder_id / created_at）
@@ -72,7 +72,7 @@
 
 const http = require('http')
 const repo = require('./repo')
-const { send, ok, fail, readBody, readJsonBody } = require('./http-utils')
+const { send, ok, fail, readJsonBody } = require('./http-utils')
 
 // 平台通过环境变量注入端口；本地调试兜底用 9000
 const PORT = process.env.PORT || 9000
@@ -160,32 +160,23 @@ async function getMaterials(res, url) {
  *    ⚠️ 顺序很重要：先校验、后入库。不然会先写进脏数据再报错。
  */
 async function createFolder(req, res) {
-  // ── 第 1 步：读请求体 ──────────────────────────────────────
-  let raw
-  try {
-    raw = await readBody(req)
-  } catch (err) {
-    if (err.tooLarge) {
-      return fail(res, 413, 'PAYLOAD_TOO_LARGE', '提交的内容太大了')
-    }
-    throw err
-  }
-
-  // ── 第 2 步：解析 JSON ────────────────────────────────────
-  // 用户发来的东西**永远不可信**：可能是空、可能是半个 JSON、
-  // 可能是一个数组。每种情况都要给一句人能看懂的话。
+  // ── 第 1 步：读 + 解析请求体 ──────────────────────────────
+  // 【Day 23 统一】「读流 / 解析 JSON / 确认是对象」这三步原来内联在这里，
+  //   与 updateFolder 用的 readJsonBody 是**两份实现** —— 大小上限和错误文案
+  //   要改两遍，早晚会不同步。现在统一走 readJsonBody（三类错误的文案只写一处）。
+  //   用户发来的东西**永远不可信**：可能是空、可能是半个 JSON、可能是一个数组。
   let body
   try {
-    body = JSON.parse(raw)
-  } catch {
-    return fail(res, 400, 'BAD_REQUEST', '请求体不是合法的 JSON')
+    body = await readJsonBody(req)
+  } catch (err) {
+    // isRequestError = 「用户输入不对」→ 该回 4xx，用错误自带的状态码和文案
+    if (err.isRequestError) {
+      return fail(res, err.status, err.error, err.message)
+    }
+    throw err   // 其它 = 程序出错了 → 交给 route 的兜底回 500
   }
 
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    return fail(res, 400, 'BAD_REQUEST', '请求体必须是一个 JSON 对象')
-  }
-
-  // ── 第 3 步：校验字段 ────────────────────────────────────
+  // ── 第 2 步：校验字段 ────────────────────────────────────
   // 先 trim 再判断 —— 全是空格的 name 等于没填
   const id = typeof body.id === 'string' ? body.id.trim() : ''
   const name = typeof body.name === 'string' ? body.name.trim() : ''
@@ -204,7 +195,7 @@ async function createFolder(req, res) {
     return fail(res, 400, 'BAD_REQUEST', '文件夹名称最多 30 个字符')
   }
 
-  // ── 第 4 步：写入 ────────────────────────────────────────
+  // ── 第 3 步：写入 ────────────────────────────────────────
   try {
     const folder = await repo.createFolder({ id, name })
 

@@ -1,6 +1,10 @@
+# 环境变量文件（.env.example 是模板，要提交，所以开例外）
 .env
+.env.*
+!.env.example
+
 node_modules/
 dist/
 
 # 本地部署配置（含密钥，绝不提交）
-cloudbaserc.local.json
+*.local.json
