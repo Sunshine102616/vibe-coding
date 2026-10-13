@@ -127,6 +127,15 @@ function ReadyView({ folders, materials, updatedAt }) {
 
   return (
     <div className="page">
+      {/* ⚠️⚠️ 回滚演练专用横幅（Day 26 板块③）—— 这是**故意做坏的版本**，不是真功能。
+          作用：让「公网上现在跑的是不是坏版本」变成一个**肉眼可判**的事实。
+          没有它，回滚只能靠比对版本号或翻 JS 源码，不可靠。
+          Day 26 板块③ 演练结束后，本段**必须随回滚一起消失**。
+          配色取自 DESIGN_RULES 第二节「语义色 · 错误」（红底红边红字）。 */}
+      <p className="drill-banner">
+        ⚠️ 坏版本 v1.1（回滚演练用）—— 看到这条横幅说明线上跑的是坏版本，回滚还没生效。
+      </p>
+
       <StatsCard />
       <FolderCard
         folders={folderList}
