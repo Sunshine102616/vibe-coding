@@ -46,17 +46,28 @@ const { select, insert, insertMany, update, remove, count } = require('./db')
  *   数据量小（5 个文件夹 / 6 条材料）时这样最省事；
  *   材料涨到几百条要改成在数据库里建视图（已记进待办清单）。
  *
- * 【为什么排序要加 id 做次序键】
- *   seed 数据里 5 个文件夹的 created_at **完全相同**，
- *   只按 created_at 排序时数据库返回的顺序**不保证** ——
- *   实测带 limit 的查询会返回 2、1 这种乱序。
- *   加上 id.asc 之后顺序才是确定的。（Day 18 修的）
+ * 【Day 27 追加⑤ · 排序准则改了：不排，按「数据库自然序」】
+ *   Day 18 这里加过 `order: 'created_at.asc,id.asc'` —— 当时 seed 的 5 个文件夹
+ *   created_at 被 now() 设成**完全相同**（一条 INSERT 多行、同一个事务），
+ *   只按 created_at 排时数据库返回顺序不保证，于是拿 id.asc 当次序键。
+ *
+ *   ⚠️ 但 id 是英文 slug（listening / news / speaking / textbook / unsorted），
+ *      **id.asc 等于按字母排**：用户看到的顺序变成
+ *      「听力训练、新闻英语、口语跟读、课本音频、未分类」（字母序），
+ *      而 seed 的插入顺序是「课本音频、听力训练、口语跟读、新闻英语、未分类」。
+ *
+ *   → 用户原话「听力训练在前面的，你搞成按字母了。**按数据库顺序来就行**」，
+ *     所以改成**不排序**：PostgREST 不发 order 参数，
+ *     PostgreSQL 返回堆表物理序（小表无更新/无删除时 = 插入序）。
+ *
+ *   ⚠️ 代价与边界：物理序 PostgreSQL **官方不保证**（只是实践中对小表足够稳）。
+ *      真要严格保证，得给 folders 加一个显式排序列 —— 已记进待办清单。
  *
  * @returns {Promise<Array<{id,name,count,createdAt}>>}
  */
 async function listFolders() {
   const [folders, materials] = await Promise.all([
-    select('folders', { select: 'id,name,created_at', order: 'created_at.asc,id.asc' }),
+    select('folders', { select: 'id,name,created_at' }),
     select('materials', { select: 'folder_id' }),
   ])
 
@@ -224,16 +235,23 @@ async function deleteFolder(id) {
  *      所以 sentences 取回来是空的时候，材料本身照样返回。
  */
 async function listMaterials({ folderId, limit } = {}) {
-  const materials = await select('materials', {
-    select: 'id,title,folder_id,audio_url,created_at',
-    // filter 里放空对象表示不筛，db.js 会自动跳过
-    filter: folderId && folderId !== 'all' ? { folder_id: folderId } : {},
-    order: 'created_at.asc,id.asc',
-    limit,
-  })
+  // 【Day 27 改 · P3-9】两个查询**互不依赖**，并发发出去。
+  //   原来串行：首页打 /api/materials 要等两个来回（≈2 倍延迟）。
+  //   sentences 取的是**全部**材料的 material_id（不按 folder 筛），
+  //   材料查询的结果它一点都不需要 —— 谁也等不到谁。
+  //   → 改成 Promise.all 后只要一次来回的时间，和 listFolders 同一个写法。
+  const [materials, sentences] = await Promise.all([
+    select('materials', {
+      select: 'id,title,folder_id,audio_url,created_at',
+      // filter 里放空对象表示不筛，db.js 会自动跳过
+      filter: folderId && folderId !== 'all' ? { folder_id: folderId } : {},
+      order: 'created_at.asc,id.asc',
+      limit,
+    }),
+    // 一次取回全部句段的 material_id，在内存里分组
+    select('sentences', { select: 'material_id' }),
+  ])
 
-  // 一次取回全部句段的 material_id，在内存里分组
-  const sentences = await select('sentences', { select: 'material_id' })
   const sentenceCountByMaterial = new Map()
   for (const s of sentences) {
     sentenceCountByMaterial.set(
@@ -277,21 +295,29 @@ async function listMaterials({ folderId, limit } = {}) {
  * }>}
  */
 async function getMaterial(id) {
-  const rows = await select('materials', {
-    select: 'id,title,folder_id,audio_url,created_at',
-    filter: { id },
-  })
+  // 【Day 27 改 · P3-9】两个查询并发。
+  //   句段的过滤条件用的是**入参 id**，不是第一次查询的结果 —— 所以本来就不用等
+  //   （和 listMaterials 同理，那里的 sentences 也完全不依赖 materials）。
+  //   ⚠️ 唯一代价：**查不到的 id 也会白发一次 sentences 查询** ——
+  //      原来会在下面第一个 if 处直接 return null，第二个查询根本不发。
+  //      换来的好处是「正常打开练习页」（有效 id，绝大多数情况）少一次来回。
+  //      404 是少数路径，值得为热路径让路；两种情况下**返回结果完全一样**。
+  const [rows, sentences] = await Promise.all([
+    select('materials', {
+      select: 'id,title,folder_id,audio_url,created_at',
+      filter: { id },
+    }),
+    select('sentences', {
+      select: 'no,text,start_ms,end_ms',
+      filter: { material_id: id },
+      order: 'no.asc',
+    }),
+  ])
 
   // 0 行 = 没有这个 id（不是「一条没有句段的材料」）
   if (rows.length === 0) return null
 
   const m = rows[0]
-
-  const sentences = await select('sentences', {
-    select: 'no,text,start_ms,end_ms',
-    filter: { material_id: id },
-    order: 'no.asc',
-  })
 
   // 列名转换只在这一层做 —— 接口层（index.js）不该见到 start_ms
   return {
