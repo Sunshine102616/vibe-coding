@@ -27,7 +27,11 @@
 //   （响应头 Content-Range 的解析），不属于业务。
 // ============================================================
 
-const { select, insert, update, remove, count } = require('./db')
+// ⚠️ 【Day 27 修】原来漏了 insertMany —— createMaterial 里用它存句段，
+//    但没在这里引进来，于是**建材料必失败**（ReferenceError），
+//    而报错被兜底吞成「服务出问题了，请稍后再试」，看不出真因。
+//    ⚠️ 只在校验全过、真正走到写库那一步才现形 —— 前面 10 条校验分支全是好的。
+const { select, insert, insertMany, update, remove, count } = require('./db')
 
 // ── 文件夹 ───────────────────────────────────────────────────
 
@@ -248,6 +252,131 @@ async function listMaterials({ folderId, limit } = {}) {
   }))
 }
 
+/**
+ * 取单条材料，连同它的全部句段（Day 27 新增）。
+ *
+ * 【为什么单独一个接口，而不是让前端从列表里挑】
+ *   练习页要的是「一条材料 + 它的每一句」。列表接口只给 `sentenceCount`（一个数字），
+ *   拿不到句子本身。以前练习页读的是写死的 mock，所以看不出缺什么（P1-7 / P1-8）。
+ *   ⚠️ 也不能靠「把全库材料拉回来在前端筛」—— 那是 P3-8 记过的问题。
+ *
+ * 【句段为什么必须显式排序】
+ *   表的主键是 `(material_id, no)`，但 **SELECT 不保证返回顺序**。
+ *   实测过：不写 order 时数据库给的行序是随机的。
+ *   练习页要按「第 1 句 → 第 2 句」显示，所以必须 `no.asc`。
+ *   （和 `listFolders` 里加 `id.asc` 做次序键是同一个坑。）
+ *
+ * 【为什么返回 null 而不是空对象】
+ *   查不到这个 id 时，接口层要回 **404**（和 `updateFolder` 一样的约定）。
+ *   这一层不碰 HTTP（分层原则），所以用 `null` 表达「没这条」。
+ *
+ * @param {string} id
+ * @returns {Promise<null | {
+ *   id, title, folderId, audioUrl, createdAt,
+ *   sentences: Array<{no, text, startMs, endMs}>
+ * }>}
+ */
+async function getMaterial(id) {
+  const rows = await select('materials', {
+    select: 'id,title,folder_id,audio_url,created_at',
+    filter: { id },
+  })
+
+  // 0 行 = 没有这个 id（不是「一条没有句段的材料」）
+  if (rows.length === 0) return null
+
+  const m = rows[0]
+
+  const sentences = await select('sentences', {
+    select: 'no,text,start_ms,end_ms',
+    filter: { material_id: id },
+    order: 'no.asc',
+  })
+
+  // 列名转换只在这一层做 —— 接口层（index.js）不该见到 start_ms
+  return {
+    id: m.id,
+    title: m.title,
+    folderId: m.folder_id,
+    audioUrl: m.audio_url,
+    createdAt: m.created_at,
+    sentences: sentences.map((s) => ({
+      no: s.no,
+      text: s.text,
+      startMs: s.start_ms,
+      endMs: s.end_ms,
+    })),
+  }
+}
+
+/**
+ * 新建一条材料，连同它的句段（Day 27 新增）。
+ *
+ * 【为什么材料先插、句段后插】
+ *   句段表的外键指向材料（`sentences.material_id → materials.id`），
+ *   材料不存在时句段插不进去 —— 所以顺序不能反。
+ *
+ * 【⚠️ 这里没有真正的「事务」，用的是补偿删除】
+ *   PostgREST 走 HTTP，一个请求一个事务，**跨请求没有事务**。
+ *   所以「插材料 + 插句段」这两步之间可能失败，留下一条「有标题、没句子」的半成品。
+ *   处置：句段插入失败时，**回头把材料删掉**（补偿），再把错误抛给上层。
+ *   ⚠️ 补偿本身也可能失败（比如没有 DELETE 权限）—— 那种情况下材料会留下，
+ *      但**不会静默**：错误照抛，接口层回 500，日志里记着。
+ *      「部分成功还报成功」才是真正要避免的（Day 24 的「假成功」）。
+ *
+ * 【句段的列名转换也在这里做】
+ *   接口层说的是 camelCase（startMs），数据库要的是 snake_case（start_ms）。
+ *   这个转换只在这一层出现，上层两边都不用管。
+ *
+ * @param {{id:string, title:string, folderId:string, audioUrl:string|null,
+ *          sentences: Array<{no:number, text:string|null, startMs:number, endMs:number}>}} input
+ * @returns {Promise<object>} 接口形状的材料（和 getMaterial 一致）
+ */
+async function createMaterial({ id, title, folderId, audioUrl, sentences = [] }) {
+  const row = await insert('materials', {
+    id,
+    title,
+    folder_id: folderId,
+    audio_url: audioUrl || null,
+  })
+
+  try {
+    await insertMany(
+      'sentences',
+      sentences.map((s) => ({
+        material_id: id,
+        no: s.no,
+        text: s.text,
+        start_ms: s.startMs,
+        end_ms: s.endMs,
+      }))
+    )
+  } catch (err) {
+    // 补偿：把刚插进去的材料撤掉，别留半成品
+    try {
+      await remove('materials', { id })
+    } catch (cleanupErr) {
+      // 补偿失败只能记日志 —— 不掩盖原始错误（那才是调用方要知道的）
+      console.error(`[repo] 补偿删除失败：material id=${id}`, cleanupErr)
+    }
+    throw err
+  }
+
+  return {
+    id: row.id,
+    title: row.title,
+    folderId: row.folder_id,
+    audioUrl: row.audio_url,
+    createdAt: row.created_at,
+    sentences: sentences.map((s) => ({
+      no: s.no,
+      text: s.text,
+      startMs: s.startMs,
+      endMs: s.endMs,
+    })),
+  }
+}
+
 module.exports = {
   listFolders,
   createFolder,
@@ -255,4 +384,6 @@ module.exports = {
   deleteFolder,
   countMaterialsInFolder,
   listMaterials,
+  getMaterial,
+  createMaterial,
 }

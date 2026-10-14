@@ -22,9 +22,21 @@
 //     失败   → 断开网络后刷新（或把 api.js 里的 BASE_URL 改成一个不存在的地址）
 //
 // 【界面结构没变】依旧依据 PRD 第三节：文件夹列表 + 材料列表 + 连续打卡天数。
+//
+// Day 27：文件夹补上「改名 / 删除」入口（P1-9）+ 删除二次确认（P1-10）。
+//         接口早就有了（`PATCH|DELETE /api/folders/:id`），缺的一直是前端入口 ——
+//         也就是说：**功能在，但用户摸不到**，和没有是一样的。
+//         ⚠️ 删除失败（文件夹里还有材料）时，后端回 409 并带着**现查的条数**，
+//            那句话前端编不出来 → 原样显示，不自己另写一句。
 
 import { useCallback, useEffect, useState } from 'react'
-import { fetchFolders, fetchMaterials, getLastUpdatedAt } from '../api.js'
+import {
+  deleteFolder,
+  fetchFolders,
+  fetchMaterials,
+  getLastUpdatedAt,
+  renameFolder,
+} from '../api.js'
 import { ROUTES, practicePath } from '../useHashRoute.js'
 
 // 把服务器时间（ISO 字符串）显示成人看得懂的样子。
@@ -56,8 +68,17 @@ export default function Home() {
 
   // useCallback：把 load 函数本身固定下来，好让下面的 useEffect 只在首次挂载时跑一次。
   // 不包的话每次渲染都是新函数，effect 会反复触发 → 无限请求。
-  const load = useCallback(async () => {
-    setStatus('loading')
+  //
+  // 【`silent` 是干什么的】（Day 27）
+  //   改名 / 删除成功之后要重新读一遍数据。但如果直接走 load()，
+  //   它会先 `setStatus('loading')` → Home 渲染成 LoadingView →
+  //   **ReadyView 整个卸载** → FolderCard 里的本地状态（「已改名为…」的提示、
+  //   当前选中的文件夹）全部丢失。
+  //   结果就是：操作成功了，页面却闪一下骨架屏、提示消失、选中被重置 ——
+  //   用户完全看不到「我刚才那一下到底成没成」。
+  //   所以「已经有数据时的刷新」用 silent：不切状态，读完直接替换数据。
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setStatus('loading')
     try {
       // 两个请求互不依赖，用 Promise.all 一起发，省掉一次来回等待
       const [folderResult, materialResult] = await Promise.all([
@@ -72,6 +93,9 @@ export default function Home() {
     } catch (err) {
       // api.js 抛出来的 message 已经是写好的中文，直接拿来给用户看。
       // 不在这里猜原因（是断网？是服务器挂了？）—— 猜错了会把人带偏。
+      //
+      // ⚠️ silent 刷新失败也照样切到错误页：这时候手上的数据**可能是错的**
+      //    （比如改名其实没生效），继续显示它等于说假话。宁可说「读取失败」。
       setErrorMessage(err.message)
       setStatus('error')
     }
@@ -89,12 +113,21 @@ export default function Home() {
   //    知道「东西在别的文件夹里」，而不是一屏「还没有任何材料」。
   if (folders.length === 0 && materials.length === 0) return <EmptyView />
 
-  return <ReadyView folders={folders} materials={materials} updatedAt={updatedAt} />
+  return (
+    <ReadyView
+      folders={folders}
+      materials={materials}
+      updatedAt={updatedAt}
+      // silent：改名 / 删除后的刷新**不要**把页面切回加载中，
+      // 否则正在显示的成功提示和当前选中都会丢（原因见上面 load 的注释）。
+      onReload={() => load({ silent: true })}
+    />
+  )
 }
 
 // ── 正常状态 ───────────────────────────────────────────
 
-function ReadyView({ folders, materials, updatedAt }) {
+function ReadyView({ folders, materials, updatedAt, onReload }) {
   // 当前选中的文件夹 id；'all' = 第一项「全部材料」
   const [selectedFolderId, setSelectedFolderId] = useState('all')
 
@@ -133,6 +166,7 @@ function ReadyView({ folders, materials, updatedAt }) {
         materials={materials}
         selectedId={selectedFolder.id}
         onSelect={setSelectedFolderId}
+        onReload={onReload}
       />
       <MaterialCard
         materials={visibleMaterials}
@@ -180,8 +214,107 @@ function StatsCard() {
   )
 }
 
-// 文件夹列表卡片：点击切换当前文件夹
-function FolderCard({ folders, materials, selectedId, onSelect }) {
+// 文件夹列表卡片：点击切换当前文件夹；选中的那个可以改名 / 删除（Day 27 · P1-9 / P1-10）
+//
+// 【为什么「改名 / 删除」只出现在**选中的**那一个上】
+//   每个文件夹都挂两个按钮 → 一屏十几个按钮，看不出哪个是哪个（要先看名字再回头点按钮，
+//   视线来回跳）。只给当前选中的那一个，目标就永远明确：**你在看哪个，就改哪个**。
+//   代价是「必须先选中」—— 这一步本来就要做（选中 = 看这个文件夹的材料），不算多余。
+//
+// 【为什么「全部材料」没有这两个按钮】
+//   它不是数据库里的真文件夹，是界面上的「看全部」入口（见 ALL_FOLDER 的说明）。
+//   对它改名 / 删除都是无意义的 —— 按钮点了会报错，那比没有按钮更糟。
+//
+// 【为什么删除要二次确认】
+//   删掉之后**没有撤销**（后端没有回收站）。一次误点就没了，
+//   而文件夹里可能装着老师整理好的材料 —— 代价和「点错一下」完全不成比例。
+function FolderCard({ folders, materials, selectedId, onSelect, onReload }) {
+  // 正在改名的文件夹 id；null = 没有在改名
+  const [renamingId, setRenamingId] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
+  // 正在等确认删除的文件夹 id；null = 没有在确认
+  const [confirmingId, setConfirmingId] = useState(null)
+  // 有没有请求在路上（改名 / 删除）—— 用它禁用按钮，防止连点两次
+  const [busy, setBusy] = useState(false)
+  // 操作结果：{ folderId, kind: 'ok' | 'error', text }
+  //
+  // ⚠️ 为什么要带 `folderId`：提示要能**点名是哪个文件夹**。
+  //    删「听力训练」被拒时，后端那句话里本来就有名字，但「已删除「X」」这句
+  //    是前端写的 —— 不点名的话，用户得自己去列表里数哪个没了。
+  //    （提示显示在列表正下方，位置紧挨着刚点的那一行，见 styles.css 的 .confirm-strip 注释。）
+  const [feedback, setFeedback] = useState(null)
+
+  function startRename(folder) {
+    setFeedback(null)
+    setConfirmingId(null)
+    setRenamingId(folder.id)
+    setRenameValue(folder.name)
+  }
+
+  function cancelRename() {
+    setRenamingId(null)
+    setRenameValue('')
+  }
+
+  async function submitRename(folder) {
+    const next = renameValue.trim()
+    // 没改、或改成空的 —— 直接当取消，不发请求（省一次必然失败的来回）
+    if (next === '' || next === folder.name) {
+      cancelRename()
+      return
+    }
+
+    setBusy(true)
+    try {
+      await renameFolder(folder.id, next)
+      cancelRename()
+      // ⚠️ **先等列表刷新完，再显示「已改名为…」**。
+      //    反过来的话，提示已经说「已改名为「新名字」」了，列表还挂着旧名字 ——
+      //    界面自己和自己不一致（哪怕只有几百毫秒，用户也会看到）。
+      //    onReload 是 silent 的，不会把页面切回加载中。
+      await onReload()
+      setFeedback({ folderId: folder.id, kind: 'ok', text: `已改名为「${next}」` })
+    } catch (err) {
+      // 后端的中文提示**原样显示**（可能是 409 重名、400 超长）。
+      // 不在前端另编一句 —— 后端已经知道具体原因了，前端猜会猜错。
+      setFeedback({ folderId: folder.id, kind: 'error', text: err.message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitDelete(folder) {
+    setBusy(true)
+    try {
+      await deleteFolder(folder.id)
+      // 删掉的正好是当前选中的那个 → 退回「全部材料」。
+      // 不退的话页面会停在一个已经不存在的文件夹上：标题写着它、列表是空的，
+      // 看起来像「这个文件夹突然空了」—— 比报错更让人困惑。
+      if (folder.id === selectedId) onSelect('all')
+      setConfirmingId(null)
+      // 同 submitRename：先刷新列表，再显示提示，避免界面自相矛盾
+      await onReload()
+      setFeedback({ folderId: folder.id, kind: 'ok', text: `已删除「${folder.name}」` })
+    } catch (err) {
+      // ⚠️ 文件夹里还有材料时后端回 **409**，message 形如
+      //    「「听力训练」里还有 2 条材料，先把它们移走或删掉，再删这个文件夹」。
+      //    那个 **2 是后端现查的**，前端编不出来 → 必须原样显示。
+      setFeedback({ folderId: folder.id, kind: 'error', text: err.message })
+      setConfirmingId(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 反馈指向的那个文件夹（用来在文案里点名；可能已被删掉，所以允许 undefined）
+  const feedbackFolder =
+    feedback !== null ? folders.find((f) => f.id === feedback.folderId) : undefined
+  // 正在确认删除的那个文件夹。
+  // ⚠️ 找不到就不显示确认条 —— 不给「确定删除」按钮传 undefined，
+  //    否则点下去会是一个前端自己抛的错，而不是后端说的话。
+  const confirmingFolder =
+    confirmingId !== null ? folders.find((f) => f.id === confirmingId) : undefined
+
   return (
     <section className="card">
       <div className="card-head">
@@ -202,22 +335,127 @@ function FolderCard({ folders, materials, selectedId, onSelect }) {
               ? materials.length
               : materials.filter((m) => m.folderId === folder.id).length
           const active = folder.id === selectedId
+          // 「全部材料」不是真文件夹，不能改名 / 删除
+          const isRealFolder = folder.id !== 'all'
 
           return (
-            <li key={folder.id}>
-              <button
-                type="button"
-                className={active ? 'folder-item active' : 'folder-item'}
-                aria-pressed={active}
-                onClick={() => onSelect(folder.id)}
-              >
-                <span>{folder.name}</span>
-                <span className="muted">{count}</span>
-              </button>
+            <li key={folder.id} className="folder-row">
+              {renamingId === folder.id ? (
+                // ── 改名中：这一行变成「输入框 + 保存 / 取消」 ──
+                <div className="folder-edit">
+                  <input
+                    className="input folder-rename-input"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    // 键盘也能完成：Enter 保存、Esc 取消。
+                    // 用键盘改名时不用把手从键盘移到鼠标上。
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') submitRename(folder)
+                      if (e.key === 'Escape') cancelRename()
+                    }}
+                    aria-label={`把文件夹「${folder.name}」改成`}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-small btn-primary"
+                    disabled={busy || renameValue.trim() === ''}
+                    onClick={() => submitRename(folder)}
+                  >
+                    {busy ? '保存中……' : '保存'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    disabled={busy}
+                    onClick={cancelRename}
+                  >
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className={active ? 'folder-item active' : 'folder-item'}
+                    aria-pressed={active}
+                    onClick={() => onSelect(folder.id)}
+                  >
+                    <span>{folder.name}</span>
+                    <span className="muted">{count}</span>
+                  </button>
+
+                  {isRealFolder && active && (
+                    <span className="folder-actions">
+                      <button
+                        type="button"
+                        className="btn btn-small"
+                        onClick={() => startRename(folder)}
+                      >
+                        改名
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-small btn-danger"
+                        onClick={() => {
+                          setFeedback(null)
+                          setRenamingId(null)
+                          setConfirmingId(folder.id)
+                        }}
+                      >
+                        删除
+                      </button>
+                    </span>
+                  )}
+                </>
+              )}
             </li>
           )
         })}
       </ul>
+
+      {/* ── 二次确认（P1-10）──
+          说清「删的是哪个」和「删了会怎样」。不说后果的确认框
+          只是让人多按一次，起不到拦一下的作用。
+          放在列表下方而不是那一行里 —— 原因见 styles.css 的 .confirm-strip 注释。 */}
+      {confirmingFolder && (
+        <div className="confirm-strip">
+          <span className="confirm-text">
+            确定删除「{confirmingFolder.name}」？删除后无法恢复。
+          </span>
+          <button
+            type="button"
+            className="btn btn-small btn-danger"
+            disabled={busy}
+            onClick={() => submitDelete(confirmingFolder)}
+          >
+            {busy ? '删除中……' : '确定删除'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-small"
+            disabled={busy}
+            onClick={() => setConfirmingId(null)}
+          >
+            取消
+          </button>
+        </div>
+      )}
+
+      {/* ── 操作结果 ──
+          成功和失败都显示在**同一个位置**，用户不用猜「刚才那句在哪」。
+          失败时显示的是**后端原话**（如「「听力训练」里还有 2 条材料…」）——
+          那个条数是后端现查的，前端编不出来。 */}
+      {feedback && (
+        <p
+          className={`field-msg folder-feedback ${
+            feedback.kind === 'ok' ? 'msg-ok' : 'msg-error'
+          }`}
+        >
+          {feedback.text}
+          {feedback.kind === 'error' && !feedbackFolder ? '（这个文件夹已经不在了）' : ''}
+        </p>
+      )}
     </section>
   )
 }

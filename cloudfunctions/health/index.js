@@ -143,6 +143,33 @@ async function getMaterials(res, url) {
   ok(res, { materials })
 }
 
+// ── 接口 7：取单条材料（Day 27 新增）──────────────────────────
+
+/**
+ * GET /api/materials/:id —— 取一条材料，连同它的全部句段
+ *
+ * 【为什么练习页需要它】
+ *   练习页要逐句显示、逐句播放，所以需要「这条材料的每一句」。
+ *   列表接口（`GET /api/materials`）只给 `sentenceCount` 一个数字，拿不到句子本身。
+ *
+ * 【为什么找不到要回 404，而不是 200 + 空数据】
+ *   和 PATCH / DELETE 同一个道理：**目标不存在就是错误**。
+ *   如果回 200 但 `sentences` 是空数组，前端会显示「这条材料有 0 句话」——
+ *   用户看到的不是「材料不存在」，而是「材料坏了」，**误导的方向完全错了**。
+ *   ⚠️ 这也正是练习页以前那个假故障：点 id 4/5/6 显示「找不到」，
+ *      根因就是拿 mock 名单去查真数据。
+ */
+async function getMaterial(res, id) {
+  const material = await repo.getMaterial(id)
+
+  // null = 没有这个 id（repo 层不碰 HTTP，所以用 null 表达「没这条」）
+  if (!material) {
+    return fail(res, 404, 'NOT_FOUND', `没有找到 id 为「${id}」的材料`)
+  }
+
+  ok(res, { material })
+}
+
 // ── 接口 4：新建文件夹 ────────────────────────────────────────
 
 /**
@@ -413,6 +440,31 @@ async function route(pathname, url, req, res) {
         await getMaterials(res, url)
         return true
       }
+      if (method === 'POST') {
+        await createMaterial(req, res)
+        return true
+      }
+      fail(res, 405, 'METHOD_NOT_ALLOWED', `这个接口不支持 ${method} 请求`)
+      return true
+    }
+
+    // ── 带路径参数的路径：/materials/<id>（Day 27 新增）────────
+    // 和上面 `/folders/<id>` 同一个套路：精确比较匹配不上带参数的路径，必须用正则。
+    // 【为什么放在 `/materials` 精确比较之后】
+    //   正则要求「`/materials/` 后面至少一个非斜杠字符」，所以它本来也匹配不上
+    //   `/materials`；但**写在后面读起来更安全** —— 一眼就能看出「先精确、后带参数」，
+    //   不必去推演正则的行为。（顺序靠巧合正确，是将来最容易改坏的一类代码。）
+    const materialIdMatch = pathname.match(/^\/(?:api\/)?materials\/([^/]+)$/)
+    if (materialIdMatch) {
+      // id 可能是百分号编码过的（比如中文），解回来再用
+      const id = decodeURIComponent(materialIdMatch[1])
+
+      if (method === 'GET') {
+        await getMaterial(res, id)
+        return true
+      }
+
+      // 路径对、方法不对 —— 和其它接口一样回 405
       fail(res, 405, 'METHOD_NOT_ALLOWED', `这个接口不支持 ${method} 请求`)
       return true
     }
@@ -422,8 +474,224 @@ async function route(pathname, url, req, res) {
     // 连不上数据库、API Key 没配、网关报错……都落在这里。
     // 给用户看的是「说人话」的提示，技术细节只进日志（契约 1.5 的原则）
     console.error('[api] 接口出错：', err)
+
+    // ── 【Day 27 加】把「配置没做好」和「临时故障」分开 ────────────────
+    //
+    // 这两类都该回 500（确实是服务器的问题，不是用户操作错），
+    // 但**提示语必须不同**：
+    //   · 临时故障（网络抖、数据库忙）→ 「稍后再试」是有用的建议
+    //   · 配置没做（没授权、没建表、没配密钥）→ 「稍后再试」是**骗人的**：
+    //     试一万次也不会好。用户会一直点、一直以为是自己手气不好，
+    //     最后自己编一个理由放弃 —— 这就是 Day 14 记下的「沉默的失败」。
+    //
+    // db.js 已经把 SQLSTATE 翻成中文了（err.code 是**剥过 `DATABASE_` 前缀**的），
+    // 这里只挑「重试没用」的那几个，换成能指向真正原因的话。
+    // ⚠️ 键写成字符串：SQLSTATE 是**定长字符串**，不是数字（42P01 带字母）。
+    const CONFIG_ERRORS = {
+      // insufficient_privilege：表在，但没授权。最典型的是新增一张要写的表
+      // 之后忘了 `GRANT INSERT ON public.<表> TO anon;`（Day 18 踩过）
+      '42501': '数据库还没给这张表开写权限，需要在数据库里授权之后才能用（不是你的操作问题）',
+      // undefined_table：连表都没建，建表脚本没跑
+      '42P01': '数据库里没有这张表，需要先执行建表脚本（不是你的操作问题）',
+      // 缺少 API Key 环境变量 —— db.js 提前抛的，同样是「重试没用」那一类
+      CONFIG: '云函数缺少数据库访问密钥，需要在云函数配置里补上（不是你的操作问题）',
+    }
+
+    // 没有 err.code 的那类（比如密钥缺失，是 db.js 自己抛的 Error）
+    const key = err.code || (/CLOUDBASE_API_KEY/.test(err.message) ? 'CONFIG' : '')
+
+    if (CONFIG_ERRORS[key]) {
+      // 用**独立**的 error 代号，方便日后在日志里一眼认出「这不是故障，是没配好」
+      fail(res, 500, 'CONFIG_ERROR', CONFIG_ERRORS[key])
+      return true
+    }
+
     fail(res, 500, 'INTERNAL_ERROR', '服务出问题了，请稍后再试')
     return true
+  }
+}
+
+// ── 接口 8：新建材料（Day 27 新增）──────────────────────────
+
+// 上限**只写一处**，校验和文案都用它 —— 两边写死两个数字早晚会不一致（Day 24 的 Bug D）。
+const MAX_TITLE_LENGTH = 100
+const MAX_SENTENCE_TEXT_LENGTH = 500
+const MAX_AUDIO_URL_LENGTH = 500
+const MAX_SENTENCE_COUNT = 500
+
+/**
+ * 生成材料 id。
+ *
+ * 【为什么由服务端生成，不让前端传】
+ *   材料 id 会进地址栏（`#/practice/<id>`），而且它是**主键**。
+ *   让前端传，就等于把「主键由客户端决定」写进契约 ——
+ *   前端算重复了就是一个 409，用户看到的是莫名其妙的报错。
+ *   服务端生成就没这个问题。
+ *
+ * 【为什么不是自增数字】
+ *   表里 `id` 是 text，没有 sequence。要改成自增得动表结构，
+ *   而这里唯一的要求是「唯一、短、能进 URL」——时间戳 + 随机后缀就够了。
+ *   前缀 `m` 让人一眼看出「这是材料」（和 seed 里的 '1'、'2' 区分开）。
+ */
+function newMaterialId() {
+  return 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+}
+
+/**
+ * 校验并规整句段数组。返回 `{ sentences }` 或 `{ error: '中文提示' }`。
+ *
+ * 【为什么校验要写得这么细】
+ *   句段是**用户填的文本 + 前端算出来的时间**，两样都不可信：
+ *     序号可能重复（数据库主键是 (material_id, no)，重复会 409）
+ *     终点可能小于起点（数据库有 CHECK 约束，违反会 400 但报错看不懂）
+ *     文本可能是 null（这是**合法的**，PRD 明确「不填文本也能保存」）
+ *   ⚠️ **在进数据库之前挡掉**，报错才说得清楚。让数据库去拒，
+ *      用户看到的是 `DATABASE_23514` 这种天书。
+ */
+function parseSentences(raw) {
+  // 不传 / 传 null = 这条材料没有句段（正常情况，不是错误）
+  if (raw === undefined || raw === null) return { sentences: [] }
+
+  if (!Array.isArray(raw)) return { error: '句段（sentences）必须是数组' }
+  if (raw.length > MAX_SENTENCE_COUNT) {
+    return { error: `一条材料最多 ${MAX_SENTENCE_COUNT} 个句段` }
+  }
+
+  const out = []
+  const seenNo = new Set()
+
+  for (let i = 0; i < raw.length; i++) {
+    const s = raw[i]
+    const at = `第 ${i + 1} 个句段`
+
+    if (!s || typeof s !== 'object' || Array.isArray(s)) {
+      return { error: `${at}不是一个对象` }
+    }
+
+    // ── 序号 ──────────────────────────────────────────────
+    if (!Number.isInteger(s.no) || s.no < 1) {
+      return { error: `${at}的序号（no）必须是 1 以上的整数` }
+    }
+    if (seenNo.has(s.no)) {
+      return { error: `句段序号 ${s.no} 重复了` }
+    }
+    seenNo.add(s.no)
+
+    // ── 文本（可以是 null / 空字符串 —— 都当「没填」）─────
+    let text = null
+    if (s.text !== undefined && s.text !== null && s.text !== '') {
+      if (typeof s.text !== 'string') return { error: `${at}的文本（text）必须是字符串` }
+      const trimmed = s.text.trim()
+      if (trimmed.length > MAX_SENTENCE_TEXT_LENGTH) {
+        return { error: `${at}的文本最多 ${MAX_SENTENCE_TEXT_LENGTH} 个字符` }
+      }
+      text = trimmed === '' ? null : trimmed
+    }
+
+    // ── 起止时间 ──────────────────────────────────────────
+    if (!Number.isInteger(s.startMs) || s.startMs < 0) {
+      return { error: `${at}的起点（startMs）必须是不小于 0 的整数（毫秒）` }
+    }
+    if (!Number.isInteger(s.endMs) || s.endMs <= s.startMs) {
+      return { error: `${at}的终点（endMs）必须大于起点（startMs）` }
+    }
+
+    out.push({ no: s.no, text, startMs: s.startMs, endMs: s.endMs })
+  }
+
+  // 进来就排好序 —— 数据库不保证返回顺序（repo.getMaterial 的说明），
+  // 这里排一次，后面读写都省心。
+  out.sort((a, b) => a.no - b.no)
+
+  return { sentences: out }
+}
+
+/**
+ * POST /api/materials —— 新建一条材料（可带句段）
+ *
+ * 【请求体】
+ *   {
+ *     "title": "VOA 慢速英语 0902",      必填，≤ 100 字
+ *     "folderId": "listening",            必填，必须已存在
+ *     "audioUrl": "https://…/a.mp3",      选填；填了必须以 http(s):// 开头
+ *     "sentences": [ {no,text,startMs,endMs}, … ]   选填
+ *   }
+ *   ⚠️ **id 不用传**，服务端生成。
+ *
+ * 【为什么「文件夹不存在」要回 400 而不是 500】
+ *   数据库会给一个外键冲突（23503），但那是**用户填错了文件夹**，
+ *   不是服务器坏了。400 才是对的 —— 而且提示里要带上那个 id，
+ *   用户才知道自己填的是什么。
+ */
+async function createMaterial(req, res) {
+  // ── 第 1 步：读 + 解析请求体 ─────────────────────────────
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    if (err.isRequestError) {
+      return fail(res, err.status, err.error, err.message)
+    }
+    throw err
+  }
+
+  // ── 第 2 步：校验 ────────────────────────────────────────
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  const folderId = typeof body.folderId === 'string' ? body.folderId.trim() : ''
+
+  if (!title) return fail(res, 400, 'BAD_REQUEST', '材料标题不能为空')
+  if (title.length > MAX_TITLE_LENGTH) {
+    return fail(res, 400, 'BAD_REQUEST', `材料标题最多 ${MAX_TITLE_LENGTH} 个字符`)
+  }
+  if (!folderId) return fail(res, 400, 'BAD_REQUEST', '必须指定所属文件夹')
+
+  // 音频地址：选填。填了就必须是个能用的 http(s) 地址 ——
+  // 存一个 `javascript:` 或随便一串字进去，练习页会加载失败，
+  // 而用户完全不知道是自己填错了。
+  let audioUrl = null
+  const rawAudio = body.audioUrl
+  if (rawAudio !== undefined && rawAudio !== null && rawAudio !== '') {
+    if (typeof rawAudio !== 'string') {
+      return fail(res, 400, 'BAD_REQUEST', '音频地址（audioUrl）必须是字符串')
+    }
+    audioUrl = rawAudio.trim()
+    if (audioUrl.length > MAX_AUDIO_URL_LENGTH) {
+      return fail(res, 400, 'BAD_REQUEST', `音频地址最多 ${MAX_AUDIO_URL_LENGTH} 个字符`)
+    }
+    if (!/^https?:\/\//i.test(audioUrl)) {
+      return fail(res, 400, 'BAD_REQUEST', '音频地址必须以 http:// 或 https:// 开头')
+    }
+  }
+
+  const parsed = parseSentences(body.sentences)
+  if (parsed.error) return fail(res, 400, 'BAD_REQUEST', parsed.error)
+
+  // ── 第 3 步：写入 ────────────────────────────────────────
+  const id = newMaterialId()
+
+  try {
+    const material = await repo.createMaterial({
+      id,
+      title,
+      folderId,
+      audioUrl,
+      sentences: parsed.sentences,
+    })
+
+    // 写操作单独记一条 —— 事后能回答「这条材料是谁、什么时候建的」
+    console.log(
+      `[api] 新建材料成功：id=${id} title=${title} folder=${folderId} 句段=${parsed.sentences.length}`
+    )
+
+    // 201 Created：明确表示「新建了一个资源」
+    send(res, 201, { ok: true, data: { material }, time: new Date().toISOString() })
+  } catch (err) {
+    // 23503 = 外键冲突 = 这个 folderId 不存在
+    if (err.code === '23503') {
+      return fail(res, 400, 'BAD_REQUEST', `所属文件夹不存在（id：${folderId}）`)
+    }
+    // 其它错误（含句段插入失败后的补偿）交给 route 的兜底：记日志、返回 500
+    throw err
   }
 }
 

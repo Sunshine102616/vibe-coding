@@ -8,11 +8,12 @@
 //
 // 路由表与解析见 src/useHashRoute.js。
 
+import { useCallback, useEffect, useState } from 'react'
 import Home from './pages/Home.jsx'
 import NewMaterial from './pages/NewMaterial.jsx'
 import Practice from './pages/Practice.jsx'
 import { ROUTES, practicePath, useHashRoute } from './useHashRoute.js'
-import { findMaterialById } from './mock/homeData.js'
+import { fetchMaterial } from './api.js'
 
 // 应用版本号（Day 26）
 //
@@ -37,9 +38,15 @@ export default function App() {
   const route = useHashRoute()
 
   // 练习页要显示哪条材料？由地址里的 id 决定（二级路由）。
-  // 找不到了（例如手打 #/practice/999）返回 null，交给 Practice 显示「找不到这条材料」。
-  const currentMaterial =
-    route.name === 'practice' && route.id ? findMaterialById(route.id) : null
+  //
+  // 【Day 27 改成异步】原来这里调 `findMaterialById`（读本地 mock，立刻有结果）。
+  //   接真数据后要**等网络**，于是多出三种以前不存在的情况：
+  //     正在读 / 读失败 / 读回来发现没这条（id 不存在）
+  //   这三种要分别显示不同的话，所以状态由这个 hook 统一管。
+  //
+  // ⚠️ 为什么放在 App 而不是 Practice 里：**面包屑也要用材料标题**。
+  //    如果只在 Practice 里取，面包屑就拿不到标题，只能显示「材料 3」。
+  const practice = usePracticeMaterial(route.name === 'practice' ? route.id : null)
 
   return (
     <div className="app">
@@ -60,13 +67,19 @@ export default function App() {
         </nav>
       </header>
 
-      <Breadcrumb route={route} material={currentMaterial} />
+      <Breadcrumb route={route} material={practice.material} />
 
       <main className="app-main">
         {route.name === 'home' && <Home />}
         {route.name === 'new' && <NewMaterial />}
         {route.name === 'practice' && (
-          <Practice material={currentMaterial} materialId={route.id} />
+          <Practice
+            status={practice.status}
+            material={practice.material}
+            errorMessage={practice.errorMessage}
+            materialId={route.id}
+            onRetry={practice.reload}
+          />
         )}
       </main>
 
@@ -76,6 +89,70 @@ export default function App() {
       </footer>
     </div>
   )
+}
+
+// ── 取练习页要用的那条材料（Day 27 新增）──────────────────────
+//
+// 【为什么单独抽成一个 hook】
+//   练习页的状态从「同步查 mock」变成「异步问服务器」之后，
+//   多出了三件必须处理的事：竞态、卸载后 setState、重新读取。
+//   三件事都写进组件里会把业务逻辑淹掉，所以抽出来。
+//
+// 【status 的四种取值 —— 它们要显示的文案完全不同】
+//   'idle'      地址里没写 id（#/practice）→ 「这个地址没有指定要练哪条材料」
+//   'loading'   正在读
+//   'not-found' 服务器明确回了 404      → 「列表里没有编号为 3 的材料」
+//   'error'     网络断了 / 服务出错     → 「读取失败」+ 给「重新读取」
+//   'ready'     读到了
+//
+//   ⚠️ **'not-found' 和 'error' 必须分开**：前者是「这条材料不存在」（链接失效，
+//      换个材料就好），后者是「现在读不到」（重试可能就好了）。
+//      合并成一种，用户会去做错误的下一步 —— 这是 Day 14「沉默的失败」同一类问题。
+//
+// @param {string|null} materialId
+function usePracticeMaterial(materialId) {
+  const [state, setState] = useState({ status: 'idle', material: null, errorMessage: '' })
+  const [attempt, setAttempt] = useState(0) // 变化一次 = 重新读一次
+
+  useEffect(() => {
+    if (!materialId) {
+      setState({ status: 'idle', material: null, errorMessage: '' })
+      return
+    }
+
+    // 【为什么需要 cancelled】
+    //   用户在「材料 1 → 材料 2 → 材料 3」之间快速点击时，几个请求会同时在路上。
+    //   谁先回来不一定（网络顺序不保证）—— 如果不作废旧的，
+    //   可能「材料 1」的响应最后到，把「材料 3」的内容盖上去。
+    //   这叫竞态条件，表现是「页面显示的材料和地址栏的 id 对不上」。
+    let cancelled = false
+
+    setState({ status: 'loading', material: null, errorMessage: '' })
+
+    fetchMaterial(materialId)
+      .then((data) => {
+        if (cancelled) return
+        setState({ status: 'ready', material: data.material, errorMessage: '' })
+      })
+      .catch((err) => {
+        if (cancelled) return
+        // 用**状态码**判断，不用中文文案（见 api.js 的说明）
+        const notFound = err.status === 404
+        setState({
+          status: notFound ? 'not-found' : 'error',
+          material: null,
+          errorMessage: err.message,
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [materialId, attempt])
+
+  const reload = useCallback(() => setAttempt((n) => n + 1), [])
+
+  return { ...state, reload }
 }
 
 // 面包屑（余力加练项）

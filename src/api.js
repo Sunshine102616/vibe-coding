@@ -62,12 +62,23 @@ async function request(path, options) {
     body = await res.json()
   } catch {
     // 服务器回了非 JSON（比如网关自己的错误页）
-    throw new Error(`服务器返回了意外的内容（HTTP ${res.status}）`)
+    const err = new Error(`服务器返回了意外的内容（HTTP ${res.status}）`)
+    err.status = res.status
+    throw err
   }
 
   if (!body.ok) {
     // 接口自己说失败了 —— message 已经是写好的中文，直接用
-    throw new Error(body.message || `请求失败（HTTP ${res.status}）`)
+    const err = new Error(body.message || `请求失败（HTTP ${res.status}）`)
+    // 【为什么要把状态码挂在 Error 上】（Day 27）
+    //   调用方有时需要**区分错误的种类**，而不是只显示一句话。
+    //   最典型的是 404：练习页要分开说「这条材料不存在」（链接失效）
+    //   和「读取失败」（网络/服务问题）—— 两者该给用户的下一步完全不同。
+    //   ⚠️ 不要靠「message 里有没有『没有找到』」来判断：文案一改判断就失效，
+    //      而且那是**用中文文案当逻辑**，最脆的一种写法。
+    err.status = res.status
+    err.code = body.error
+    throw err
   }
 
   // 记下服务器时间，供「最后更新时间」显示（加练 · Day 20）
@@ -106,8 +117,6 @@ export function fetchMaterials({ folderId, limit } = {}) {
 
 /**
  * 新建文件夹。
- * ⚠️ 首页用不到，是给新建页准备的（P1-2 还没接上）—— 先放在这里，
- *    接的时候不用再写一遍请求逻辑。
  *
  * @param {{id:string, name:string}} input
  * @returns {Promise<{folder: {id,name,count,createdAt}}>}
@@ -117,5 +126,70 @@ export function createFolder({ id, name }) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, name }),
+  })
+}
+
+/**
+ * 改文件夹名字（Day 27 接前端）。
+ * ⚠️ 只能改 name，不能改 id —— id 是材料关联文件夹的依据（契约 2.5）。
+ *
+ * @param {string} id
+ * @param {string} name
+ * @returns {Promise<{folder: {id,name,count,createdAt}}>}
+ */
+export function renameFolder(id, name) {
+  return request(`/folders/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+/**
+ * 删一个文件夹（Day 27 接前端）。
+ *
+ * ⚠️ **里面有材料时后端会回 409**，message 是写好的中文
+ *    （「「听力训练」里还有 2 条材料，先把它们移走或删掉，再删这个文件夹」）。
+ *    调用方要**把这句话原样显示给用户**，不要自己另编一句 ——
+ *    里面那个条数是后端现查的，前端编不出来。
+ *
+ * @param {string} id
+ * @returns {Promise<{folder: {id,name}}>}
+ */
+export function deleteFolder(id) {
+  return request(`/folders/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+/**
+ * 取**一条**材料，连同它的全部句段（Day 27 新增）。
+ *
+ * 练习页靠它逐句显示、逐句播放。列表接口只给 `sentenceCount` 一个数字，
+ * 拿不到句子本身（P1-7 / P1-8 的缺口）。
+ *
+ * @param {string} id
+ * @returns {Promise<{material: {
+ *   id, title, folderId, audioUrl, createdAt,
+ *   sentences: Array<{no, text, startMs, endMs}>
+ * }}>}
+ *
+ * ⚠️ id 不存在时抛出的 Error 上带 `status === 404`，调用方据此显示「找不到」。
+ */
+export function fetchMaterial(id) {
+  return request(`/materials/${encodeURIComponent(id)}`)
+}
+
+/**
+ * 新建一条材料（Day 27 新增）。
+ *
+ * @param {{id:string, title:string, folderId:string,
+ *          audioUrl?:string|null,
+ *          sentences?: Array<{no:number, text:string|null, startMs:number, endMs:number}>}} input
+ * @returns {Promise<{material: object}>}
+ */
+export function createMaterial(input) {
+  return request('/materials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
   })
 }

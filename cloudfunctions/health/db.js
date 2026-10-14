@@ -260,15 +260,39 @@ async function select(table, options = {}) {
  *   ⚠️ 这正是我们防重复提交的方式：**交给数据库裁判，不自己先查后插**。
  */
 async function insert(table, row) {
+  const rows = await insertMany(table, [row])
+  return rows[0]
+}
+
+// ── 对外 2b：往表里插多行（Day 27 新增）─────────────────────
+
+/**
+ * 一次插多行 —— 用来存一条材料的全部句段。
+ *
+ * 【为什么要「一次」而不是循环调 insert】
+ *   一条材料可能有几十句。循环调 = 几十次 HTTP 往返，
+ *   慢、而且**中途失败会留下「插了一半」的数据**（更难收拾）。
+ *   PostgREST 支持请求体直接传数组 → 一个请求插完，要么全成要么全败。
+ *
+ * @param {string} table
+ * @param {Array<object>} rows
+ * @returns {Promise<Array<object>>} 插入后的那些行
+ *
+ * 【空数组直接返回，不发请求】
+ *   请求体是 `[]` 时 PostgREST 会报错，而「没有句段」是完全正常的情况
+ *   （PRD：不填文本也能保存）。所以这一层直接短路。
+ */
+async function insertMany(table, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return []
+
   const { json } = await request({
     method: 'POST',
     path: `/v1/rdb/rest/${encodeURIComponent(table)}`,
-    body: row,
+    body: rows,
     prefer: 'return=representation',
   })
 
-  // PostgREST 返回数组（批量插入时是多条），我们只插一条，取第一条
-  return Array.isArray(json) ? json[0] : json
+  return Array.isArray(json) ? json : []
 }
 
 // ── 对外 3：改表里符合条件的行（Day 22 新增）────────────────
@@ -394,4 +418,4 @@ async function count(table, filter = {}) {
   return Number.isFinite(total) ? total : 0
 }
 
-module.exports = { select, insert, update, remove, count, request }
+module.exports = { select, insert, insertMany, update, remove, count, request }

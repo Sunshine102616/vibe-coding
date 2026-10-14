@@ -1,0 +1,56 @@
+# 云端音频对照表（Day 27 生成）
+#
+# 云端地址前缀：https://xingho-read-d0gamjt5d859dbd81-1497420413.tcloudbaseapp.com/audio/
+# 命名规则：lesson<课号2位>-<该课内序号2位>.mp3（源文件名含空格/逗号/撇号，不能直接当 URL）
+# 时长单位：毫秒（由浏览器 Audio 元数据读出，48/48 全部读到）
+# 源目录：E:/BaiduNetdiskDownload/星一班音频（未改动）
+#
+课号	序号	云端文件名	时长ms	时长	原文件名
+Lesson1	1	lesson01-01.mp3	40000	40.0s	Lesson1/Oh,I'm really sorry.mp3
+Lesson1	2	lesson01-02.mp3	33000	33.0s	Lesson1/That was fun.mp3
+Lesson10	1	lesson10-01.mp3	34000	34.0s	Lesson10/I'm so excited.mp3
+Lesson10	2	lesson10-02.mp3	30050	30.1s	Lesson10/What are you planing to do for your vocation.mp3
+Lesson11	1	lesson11-01.mp3	106154	106.2s	Lesson11/What should people do to make their visit to NY.mp3
+Lesson12	1	lesson12-01.mp3	38000	38.0s	Lesson12/Have you noticed how forgetful....mp3
+Lesson12	2	lesson12-02.mp3	40000	40.0s	Lesson12/Jason, Jason turn down the TV a little please.mp3
+Lesson13	1	lesson13-01.mp3	13274	13.3s	Lesson13/Aimee,I think the dog is trying to tell you something.mp3
+Lesson13	2	lesson13-02.mp3	17018	17.0s	Lesson13/James, please turn that down.mp3
+Lesson13	3	lesson13-03.mp3	10946	10.9s	Lesson13/Justin come help me.mp3
+Lesson13	4	lesson13-04.mp3	7490	7.5s	Lesson13/Molly,put the groceries away.mp3
+Lesson13	5	lesson13-05.mp3	17114	17.1s	Lesson13/What's this.mp3
+Lesson14	1	lesson14-01.mp3	76466	76.5s	Lesson14/A boss A co-worker A teacher A relative.mp3
+Lesson14	2	lesson14-02.mp3	27000	27.0s	Lesson14/What kind of job are you looking for.mp3
+Lesson16	1	lesson16-01.mp3	65000	65.0s	Lesson16/Oh good, here comes......mp3
+Lesson16	2	lesson16-02.mp3	32200	32.2s	Lesson16/This sounds good.mp3
+Lesson17	1	lesson17-01.mp3	34700	34.7s	Lesson17/Are we going to wear costumes to the parties.mp3
+Lesson17	2	lesson17-02.mp3	33800	33.8s	Lesson17/Did you know next week is Halloween.mp3
+Lesson18	1	lesson18-01.mp3	29800	29.8s	Lesson18/I don't know what classes.....mp3
+Lesson18	2	lesson18-02.mp3	35546	35.5s	Lesson18/My history professor says.mp3
+Lesson19	1	lesson19-01.mp3	32500	32.5s	Lesson19/Let me tell you a little more.mp3
+Lesson19	2	lesson19-02.mp3	36500	36.5s	Lesson19/We are now approaching the famous statue.mp3
+Lesson2	1	lesson02-01.mp3	72500	72.5s	Lesson2/Where are you from originally.mp3
+Lesson20	1	lesson20-01.mp3	32810	32.8s	Lesson20/How did you get into modeling.mp3
+Lesson20	2	lesson20-02.mp3	47066	47.1s	Lesson20/What did you do after you graduated.mp3
+Lesson21	1	lesson21-01.mp3	25178	25.2s	Lesson21/Have you read that book.mp3
+Lesson21	2	lesson21-02.mp3	20258	20.3s	Lesson21/How did you like the movie.mp3
+Lesson21	3	lesson21-03.mp3	20426	20.4s	Lesson21/What did you think of the new Stephen King book.mp3
+Lesson21	4	lesson21-04.mp3	19490	19.5s	Lesson21/What do you think of that documentary.mp3
+Lesson22	1	lesson22-01.mp3	41618	41.6s	Lesson22/Have you met Raj.mp3
+Lesson22	2	lesson22-02.mp3	29354	29.4s	Lesson22/How are things at school.mp3
+Lesson23	1	lesson23-01.mp3	41500	41.5s	Lesson23/Look at this.mp3
+Lesson23	2	lesson23-02.mp3	24200	24.2s	Lesson23/What were you do.mp3
+Lesson3	1	lesson03-01.mp3	32500	32.5s	Lesson3/Are these pictures of you.....mp3
+Lesson3	2	lesson03-02.mp3	32000	32.0s	Lesson3/You know what I remember most about.....mp3
+Lesson4	1	lesson04-01.mp3	43000	43.0s	Lesson4/So are you really going to.....mp3
+Lesson4	2	lesson04-02.mp3	39200	39.2s	Lesson4/Why is there never a bus.....mp3
+Lesson5	1	lesson05-01.mp3	58000	58.0s	Lesson5/Quite a number of things....mp3
+Lesson6	1	lesson06-01.mp3	36800	36.8s	Lesson6/Excuse me, could you.....mp3
+Lesson6	2	lesson06-02.mp3	42000	42.0s	Lesson6/Excuse me, it's me again....mp3
+Lesson7	1	lesson07-01.mp3	47000	47.0s	Lesson7/Creative Rentals.mp3
+Lesson7	2	lesson07-02.mp3	42000	42.0s	Lesson7/Hello.mp3
+Lesson8	1	lesson08-01.mp3	41000	41.0s	Lesson8/How are things going with you....mp3
+Lesson8	2	lesson08-02.mp3	33500	33.5s	Lesson8/Where are you working now.mp3
+Lesson9	1	lesson09-01.mp3	11114	11.1s	Lesson9/Gosh I  really go on a diet.mp3
+Lesson9	2	lesson09-02.mp3	22000	22.0s	Lesson9/I really need a change.mp3
+Lesson9	3	lesson09-03.mp3	12362	12.4s	Lesson9/I really need to join a club.mp3
+Lesson9	4	lesson09-04.mp3	11306	11.3s	Lesson9/I should take a typing course.mp3

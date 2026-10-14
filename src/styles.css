@@ -311,6 +311,78 @@ body {
   color: #cfe0f7;
 }
 
+/* ---------- 文件夹：改名 / 删除（Day 27 · P1-9 / P1-10）---------- */
+
+/* 一行 = 文件夹胶囊 +（选中时）操作按钮。
+   ⚠️ **不加 width: 100%** —— `.folder-list` 是横向 wrap 的胶囊布局，
+   给 li 撑满整宽会把它们压成一列，把原来的版式改掉。
+   确认条和提示统一渲染在列表**下方**（见 .confirm-strip 的注释）。 */
+.folder-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.folder-edit {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 改名时的输入框：跟胶囊一样高；宽度别撑满整行（不然像在填一张表） */
+.folder-rename-input {
+  width: 200px;
+  min-height: 36px;
+  padding: 4px 12px;
+  font-size: 14px;
+}
+
+/* 危险操作按钮：用 DESIGN_RULES 第二节「错误」那一行的色值。
+   ⚠️ 语义色只用于「会丢东西」的操作，不许拿来装饰。 */
+.btn-danger {
+  color: #a32d2d;
+  background: #fdf7f7;
+  border-color: #e8bcbc;
+}
+
+.btn-danger:hover {
+  background: #fbeeee;
+}
+
+/* 二次确认条：紧贴在文件夹列表下面。
+   【为什么不放在那一行里面】`.folder-list` 是横向 wrap 的胶囊布局，
+   往某一行的 li 里塞一条整宽的确认条会把版式撑歪。同一时刻只可能有一个
+   文件夹在确认（单个 confirmingId），所以渲染成列表下方的一条就够了 ——
+   文案里点名是哪个文件夹，位置又紧挨着刚点的那一行，不会认错。 */
+.confirm-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #fdf7f7;
+  border: 1px solid #e8bcbc;
+  border-radius: 6px;
+}
+
+.confirm-text {
+  font-size: 13px;
+  color: #a32d2d;
+}
+
+/* 操作结果提示：和确认条同一位置（列表下方），不占胶囊那一行 */
+.folder-feedback {
+  margin: 12px 0 0;
+}
+
 /* ---------- 材料列表 ---------- */
 
 .material-list {
@@ -446,6 +518,28 @@ body {
 
 .msg-error {
   color: #a32d2d;
+}
+
+/* 中间态提示：既不是成功也不是失败，而是「会保存，但少了点东西」。
+   色值取 DESIGN_RULES 第二节的语义色·提示（和 .notice 同一套）。 */
+.msg-warn {
+  color: #7a5a12;
+}
+
+/* 说明文字里夹的按钮（如「重新读取」）——
+   不给它换行，免得一行说明被拆成两段。 */
+.field-msg .btn {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* 行内小输入框：跟在说明文字后面用（如「手动填音频总时长」）。
+   不占满整行，否则一段说明会被撑成两行、读起来断气。 */
+.input-inline {
+  width: 120px;
+  margin: 0 8px;
+  padding: 4px 8px;
+  font-size: 13px;
 }
 
 /* 按钮禁用态：明确「现在不能点」，而不是点了没反应 */
@@ -627,6 +721,40 @@ body {
   display: flex;
   flex: none;
   gap: 8px;
+}
+
+/* 录音进行中：用语义色·错误，让人一眼看出「正在录」。
+   色值取自 DESIGN_RULES 第二节的语义色表（仅用于状态提示，不作装饰）。 */
+.btn-recording {
+  color: #a32d2d;
+  background: #fdf7f7;
+  border-color: #e8bcbc;
+}
+
+/* 录音条目：一行「标签 + 播放器 + 删除」。
+   width:100% 是为了在 flex-wrap 的 .sentence-item 里独占一行。 */
+.rec-entry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.rec-label {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #626a74;
+}
+
+/* 原生播放器控件：压到 32px 高，与「小按钮」档一致（DESIGN_RULES 第五节）。
+   flex:1 让它占满剩余宽度，但 min-width 防止在窄屏被压没。 */
+.rec-audio {
+  flex: 1 1 220px;
+  min-width: 0;
+  height: 32px;
 }
 
 /* ---------- 页面状态（Day 8，Day 9 加固对比度） ---------- */
