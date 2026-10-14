@@ -59,7 +59,8 @@ git grep -nIE "$PAT"
 
 # ② 未跟踪文件（--exclude-standard 会尊重 .gitignore，
 #    所以 cloudbaserc.local.json 这类「合法存放密钥且已被忽略」的文件不会误报）
-git ls-files --others --exclude-standard | while read f; do
+#    ⚠️ 必须用 -z + read -d ''，不能按行读 —— 原因见下方「为什么必须用 -z」
+git ls-files -z --others --exclude-standard | while IFS= read -r -d '' f; do
   grep -nIE "$PAT" "$f" && echo "  ↑ 命中未跟踪文件：$f"
 done
 
@@ -68,6 +69,13 @@ git grep -nIE "$PAT" $(git rev-list --all)
 ```
 
 - **通过判据：三条都 0 行。**
+- ⚠️ **必须用 `-z`，不能用 `git ls-files --others | while read f`**（Day 26 实测发现的**漏检**）：
+  `git ls-files` 默认 `core.quotePath=true`，会把**非 ASCII 文件名**（中文）转义成 `"\345\233\236\346\273\232\346\211\213\345\206\214.md"` 这种形式。
+  按行读拿到的是**转义后的字符串**，`grep` 拿它当路径去打开 → 报 `No such file or directory` → **这个文件被静默跳过**。
+  **Day 26 实测**：工作区里新建的 `回滚手册.md`（中文名）**根本没被扫**，而输出看起来「干净」——
+  这正是本 Skill 最该防的**漏检**，比误报危险（误报至少会让你去看一眼）。
+  → 两种修法：`git -c core.quotePath=false ...`（简单）或 `-z` + `IFS= read -r -d ''`（**最稳**，还能处理文件名里的空格）。
+  **用后者。** 这条和 R0-1 的其余三条一样，是「**输出看起来通过、实际没查**」的典型。
 - ⚠️ **只查被跟踪文件不够**（② 为什么必须有）：`git grep` **不扫未跟踪文件**。
   一个含密钥的新文件躺在工作区里，① 和 ③ 都看不见 —— 但只要有人跑一次 `git add -A`，它就进仓库了。
   **这是本 Skill 第一次实跑（Day 25）时发现的真漏检，不是假想。**
@@ -274,7 +282,17 @@ ls "$TMP"          # 列出残留的备份时间戳目录；无输出 = 干净
 - **顺带查清（对回滚有用）**：每个 `.cloudbase-backup/<时间戳>/` 是一份**整站快照**
   （`index.html` + `assets/` + `__auth/` + `cloud-admin/`），**不是只有 `index.html`**。
   → 它**可以**当作一条回滚素材（下载后原样重新 deploy），见 `回滚手册.md`。
-- 清理命令 `tcb hosting delete .cloudbase-backup --dir` —— ⚠️ **尚未实测验证**，执行前先确认它删的是预期范围。
+- **清理（Day 26 实测：CLI 做不到，只能人去控制台）** —— 下面这些入口**全都看不见点目录**，删不了：
+
+  | 试过的命令 | 结果 |
+  |---|---|
+  | `tcb hosting delete .cloudbase-backup --dir --dry-run` | `No matching files found`（加不加前导 `/`、带不带尾部 `/` 都一样） |
+  | `tcb hosting delete ".cloudbase-backup/<ts>/index.html"` | 同上，`No matching files found` |
+  | `tcb storage rm` / `tcb storage list` | 直接报 `This command does not support PostgreSQL environments` |
+  | `tcb storage objects list --bucket <hosting桶> --prefix .cloudbase-backup` | `Total: 0 items`（那个接口管的是「云存储」，不是静态托管桶） |
+
+  → **唯一路径：腾讯云控制台 → 静态网站托管 → 文件管理 → 删掉 `.cloudbase-backup/`。**
+  ⚠️ 判定「它还在不在」仍然只能用上面那条 `download`（HTTP 探测也行，但要先知道时间戳）。
 
 ### R5　文档
 
