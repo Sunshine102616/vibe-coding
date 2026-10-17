@@ -29,8 +29,8 @@ const APP_VERSION = 'v1.0'
 //   ② 用 <a href> 而不是 <button>：地址会被浏览器原生支持（中键新开标签、右键复制链接）
 //   ③ aria-current="page" 告诉辅助技术「这是当前所在的页面」
 const NAV_ITEMS = [
-  { key: 'home', label: '首页', hash: ROUTES.home },
-  { key: 'new', label: '新建', hash: ROUTES.new },
+  { key: 'home', label: '材料库', hash: ROUTES.home },
+  { key: 'new', label: '新建材料', hash: ROUTES.new },
   { key: 'practice', label: '练习', hash: ROUTES.practice },
 ]
 
@@ -49,27 +49,45 @@ export default function App() {
   const practice = usePracticeMaterial(route.name === 'practice' ? route.id : null)
 
   return (
-    <div className="app">
+    <div className={`app route-${route.name}`}>
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault()
+          document.getElementById('main-content')?.focus()
+        }}
+      >
+        跳到主要内容
+      </a>
       <header className="app-header">
-        <h1 className="brand">XingHo Read</h1>
+        <div className="header-inner">
+          <a className="brand" href={ROUTES.home}>
+            <img className="brand-mark" src="/xingho-mark.png" alt="" width="48" height="48" />
+            <span className="brand-copy">
+              <strong className="brand-name">XingHo Read</strong>
+              <span className="brand-tagline">英语跟读练习</span>
+            </span>
+          </a>
 
-        <nav className="nav" aria-label="主导航">
-          {NAV_ITEMS.map((item) => (
-            <a
-              key={item.key}
-              className={route.name === item.key ? 'nav-btn active' : 'nav-btn'}
-              href={item.hash}
-              aria-current={route.name === item.key ? 'page' : undefined}
-            >
-              {item.label}
-            </a>
-          ))}
-        </nav>
+          <nav className="nav" aria-label="主导航">
+            {NAV_ITEMS.map((item) => (
+              <a
+                key={item.key}
+                className={route.name === item.key ? 'nav-btn active' : 'nav-btn'}
+                href={item.hash}
+                aria-current={route.name === item.key ? 'page' : undefined}
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
+        </div>
       </header>
 
       <Breadcrumb route={route} material={practice.material} />
 
-      <main className="app-main">
+      <main className="app-main" id="main-content" tabIndex={-1}>
         {route.name === 'home' && <Home />}
         {route.name === 'new' && <NewMaterial />}
         {route.name === 'practice' && (
@@ -85,7 +103,10 @@ export default function App() {
 
       {/* 页脚版本标识（Day 26）：发布后靠它确认公网跑的是哪一版 */}
       <footer className="app-footer">
-        <span className="app-version">XingHo Read {APP_VERSION}</span>
+        <div className="footer-inner">
+          <span className="footer-brand">每天一点，让开口成为习惯。</span>
+          <span className="app-version">XingHo Read {APP_VERSION}</span>
+        </div>
       </footer>
     </div>
   )
@@ -159,7 +180,7 @@ function usePracticeMaterial(materialId) {
 // 作用：让用户随时知道「我在哪一层」，并且每一层都能点回去。
 // 用 <nav> + <ol>：ol 表示有顺序层级，屏幕阅读器会念「第 2 项，共 3 项」。
 function Breadcrumb({ route, material }) {
-  const items = [{ label: '首页', hash: ROUTES.home }]
+  const items = [{ label: '材料库', hash: ROUTES.home }]
 
   if (route.name === 'new') items.push({ label: '新建材料', hash: ROUTES.new })
   if (route.name === 'practice') {

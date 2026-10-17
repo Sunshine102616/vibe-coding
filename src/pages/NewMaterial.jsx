@@ -1,554 +1,454 @@
-// 新建页
-//
-// Day 7  骨架版
-// Day 11 给「② 新建文件夹」加输入即时校验与结果提示
-// Day 24 修 Bug D —— 校验只查重名、不查长度，输入 5000 字符也会说「这个名字可以用」
-// Day 27 **接真数据**（P1-2 / P1-4 / P1-5 / P1-11 / P1-1）：
-//        下拉读真文件夹、判重读真库、新建文件夹真写入、材料真保存
-//
-// 【Day 27 修掉的两类「假成功」】
-//   ① **Bug D2（P1-11）**：判重名单原来来自 `mock/homeData.js` 的 **3 个**文件夹，
-//      真库有 **5 个** —— 输入「新闻英语」「口语跟读」会被误判成「可以用」，
-//      真提交时被后端 409 拒。现在判重名单来自 `GET /api/folders`。
-//   ② **下拉选项写死 3 个**（P1-5）：同理，现在读真库。
-//
-// 【音频为什么是「粘贴地址」而不是「选文件」】
-//   已实测：本环境**没有云存储桶**（`tcb storage buckets list` → No buckets），
-//   静态托管桶也不能用存储 API 上传（STORAGE_BUCKET_NOT_FOUND）。
-//   唯一验证可行的路径是**命令行上传到静态托管**：
-//       tcb hosting deploy "音频.mp3" audio/材料名.mp3
-//   传完得到 https://…tcloudbaseapp.com/audio/材料名.mp3，粘到这里。
-//   ⚠️ 所以「选择本地文件」这个入口**去掉了** —— 留着它就是个点了没用的按钮
-//      （Day 14 的「沉默的失败」）。改成明确的「粘贴音频地址」+ 说明怎么拿到地址。
-
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  createFolder,
-  createMaterial,
-  fetchFolders,
-} from '../api.js'
-import { ROUTES } from '../useHashRoute.js'
+import { createFolder, createMaterial, fetchFolders } from '../api.js'
+import { ROUTES, practicePath } from '../useHashRoute.js'
 
-// 文件夹名字的最大长度。
-// ⚠️ 这个数字**不是自己定的**，必须和后端 `cloudfunctions/health/index.js` 的
-//    `if (name.length > 30)` 保持一致。
-//    两边不一致就会产生「假成功」：前端说「可以用」，用户高高兴兴点保存，
-//    后端却回 400 拒掉 —— Day 24 修的 Bug D 就是这么来的。
+// Keep limits aligned with POST /api/materials and POST /api/folders.
 const MAX_NAME_LENGTH = 30
-
-// 材料标题的上限，同样对齐后端 `index.js` 的 `MAX_TITLE_LENGTH = 100`。
 const MAX_TITLE_LENGTH = 100
-
-// 输入停止多久之后才判定（毫秒）。
-// 为什么需要这个：用户打「课」字时名字还没打完，立刻报错是把「还没输完」误判成「输错了」。
+const MAX_AUDIO_URL_LENGTH = 500
+const MAX_TEXT_LENGTH = 500
+const MAX_SENTENCES = 500
 const CHECK_DELAY = 400
 
-// 静态托管地址前缀 —— 拼给用户看「音频应该长什么样」，不用他记
-const AUDIO_URL_EXAMPLE =
-  'https://xingho-read-d0gamjt5d859dbd81-1497420413.tcloudbaseapp.com/audio/你的文件名.mp3'
+function audioAddressError(value) {
+  const url = value.trim()
+  if (!url) return ''
+  if (url.length > MAX_AUDIO_URL_LENGTH) return '音频地址最多 500 个字符'
+  return /^https?:\/\//i.test(url) ? '' : '音频地址需要以 http:// 或 https:// 开头'
+}
+
+function useAudioDuration(value) {
+  const url = value.trim()
+  const [result, setResult] = useState({ url: '', status: 'idle', ms: null })
+  useEffect(() => {
+    if (!url || audioAddressError(url)) {
+      setResult({ url, status: 'idle', ms: null })
+      return
+    }
+    let cancelled = false
+    let settled = false
+    let timer
+    const probe = new Audio()
+    probe.preload = 'metadata'
+    setResult({ url, status: 'reading', ms: null })
+
+    const release = () => {
+      probe.onloadedmetadata = null
+      probe.onerror = null
+      probe.removeAttribute('src')
+      probe.load()
+    }
+    const finish = (ms) => {
+      if (cancelled || settled) return
+      settled = true
+      clearTimeout(timer)
+      const valid = Number.isSafeInteger(ms) && ms > 0
+      setResult({ url, status: valid ? 'ok' : 'failed', ms: valid ? ms : null })
+      release()
+    }
+    probe.onloadedmetadata = () => finish(Math.round(probe.duration * 1000))
+    probe.onerror = () => finish(null)
+    timer = setTimeout(() => finish(null), 8000)
+    probe.src = url
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+      release()
+    }
+  }, [url])
+
+  // A new address must never display or submit the previous address's duration.
+  return result.url === url
+    ? result
+    : { url, status: url && !audioAddressError(url) ? 'reading' : 'idle', ms: null }
+}
 
 export default function NewMaterial() {
-  // 文件夹列表：null = 还在读
-  const [folders, setFolders] = useState(null)
+  const [folders, setFolders] = useState([])
+  const [folderStatus, setFolderStatus] = useState('loading')
   const [foldersError, setFoldersError] = useState('')
+  const requestRef = useRef(0)
 
   const loadFolders = useCallback(async () => {
+    const request = ++requestRef.current
+    setFolderStatus('loading')
     setFoldersError('')
     try {
       const data = await fetchFolders()
+      if (request !== requestRef.current) return
       setFolders(data.folders || [])
-    } catch (err) {
-      // api.js 抛出的 message 已经是写好的中文，直接用（不在这里猜原因）
-      setFoldersError(err.message)
-      setFolders([])
+      setFolderStatus('ready')
+    } catch (error) {
+      if (request !== requestRef.current) return
+      setFoldersError(error.message)
+      setFolderStatus('error')
     }
   }, [])
 
   useEffect(() => {
     loadFolders()
+    return () => { requestRef.current += 1 }
   }, [loadFolders])
 
-  return (
-    <div className="page">
-      <div className="card">
-        <div className="card-head">
-          <h2>新建材料</h2>
-          <a className="btn btn-ghost" href={ROUTES.home}>
-            返回首页
-          </a>
-        </div>
+  function addFolder(folder) {
+    setFolders((current) => [...current.filter((item) => item.id !== folder.id), folder])
+  }
 
-        <MaterialForm folders={folders} foldersError={foldersError} onReloadFolders={loadFolders} />
+  return (
+    <div className="page new-material-page">
+      <header className="new-material-heading">
+        <div>
+          <h1>新建一份练习材料</h1>
+          <p>收好一段声音，留给下一次认真开口。</p>
+        </div>
+        <a className="btn btn-ghost" href={ROUTES.home}>返回材料库</a>
+      </header>
+      <div className="new-material-layout">
+        <MaterialForm
+          folders={folders}
+          folderStatus={folderStatus}
+          foldersError={foldersError}
+          onReloadFolders={loadFolders}
+          onFolderCreated={addFolder}
+        />
+        <aside className="preparation-note" aria-label="准备材料的小提示">
+          <img src="/study-morning.png" alt="" width="1536" height="1024" />
+          <div className="preparation-copy">
+            <h2>从一小段开始。</h2>
+            <p>一段课文、一则短故事，<br />都是今天可以练习的声音。</p>
+            <ul>
+              <li><strong>音频</strong><span>粘贴可以访问的音频地址。</span></li>
+              <li><strong>文本</strong><span>可选，一行一句，方便跟读。</span></li>
+              <li><strong>练习</strong><span>保存后就能打开这份材料。</span></li>
+            </ul>
+            <p className="preparation-footnote">暂时没有文本也没关系，<br />有音频就可以先整段听。</p>
+          </div>
+        </aside>
       </div>
     </div>
   )
 }
 
-// ── 表单主体 ─────────────────────────────────────────────
-
-function MaterialForm({ folders, foldersError, onReloadFolders }) {
+function MaterialForm({ folders, folderStatus, foldersError, onReloadFolders, onFolderCreated }) {
   const [folderId, setFolderId] = useState('')
   const [title, setTitle] = useState('')
   const [audioUrl, setAudioUrl] = useState('')
   const [text, setText] = useState('')
-
-  // 从音频地址读到的总时长（毫秒）。null = 还没读到 / 读不到
-  const [durationMs, setDurationMs] = useState(null)
-  const [durationState, setDurationState] = useState('idle') // idle | reading | ok | failed
   const [manualSeconds, setManualSeconds] = useState('')
-
   const [saving, setSaving] = useState(false)
+  const [creatingFolder, setCreatingFolder] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saved, setSaved] = useState(null)
+  const savingRef = useRef(false)
+  const resultRef = useRef(null)
+  const duration = useAudioDuration(audioUrl)
 
-  // 第一次拿到文件夹列表时，默认选中第一个
-  // ⚠️ 放在 effect 里而不是 useState 初始值 —— 列表是异步来的，初始值一定是空
   useEffect(() => {
-    if (folders && folders.length > 0 && !folderId) {
-      setFolderId(folders[0].id)
+    if (folderStatus === 'ready' && !folders.some((folder) => folder.id === folderId)) {
+      setFolderId(folders[0]?.id || '')
     }
-  }, [folders, folderId])
+  }, [folders, folderId, folderStatus])
 
-  // ── 读音频时长 ──────────────────────────────────────────
-  //
-  // 【为什么要读时长】句段的 startMs / endMs 是「在音频里的位置」，
-  //   不知道音频多长就没法算。播放第 N 句 = 跳到 startMs 播放到 endMs。
-  //
-  // 【为什么可能读不到】音频地址不可访问、服务器不给跨域读、
-  //   或者根本不是音频文件。这三种都要**如实告诉用户**，不能假装成功。
   useEffect(() => {
-    const url = audioUrl.trim()
+    if (saved) resultRef.current?.focus()
+  }, [saved])
 
-    if (!/^https?:\/\//i.test(url)) {
-      setDurationState('idle')
-      setDurationMs(null)
-      return
-    }
+  const titleError = title.trim().length > MAX_TITLE_LENGTH ? '材料标题最多 100 个字符' : ''
+  const urlError = audioAddressError(audioUrl)
+  const manualMs = Math.round(Number(manualSeconds) * 1000)
+  const manualError = manualSeconds !== '' && (!Number.isSafeInteger(manualMs) || manualMs <= 0)
+    ? '请填写大于 0 的有效秒数'
+    : ''
+  const effectiveDurationMs = duration.status === 'ok'
+    ? duration.ms
+    : duration.status === 'failed' && manualSeconds !== '' && !manualError ? manualMs : null
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  const tooLongLine = lines.findIndex((line) => line.length > MAX_TEXT_LENGTH)
+  const textError = lines.length > MAX_SENTENCES
+    ? '一条材料最多 500 个句段，请减少文本行数'
+    : tooLongLine !== -1
+      ? '第 ' + (tooLongLine + 1) + ' 行最多 500 个字符，请拆成更短的句子'
+      : effectiveDurationMs !== null && lines.length > effectiveDurationMs
+        ? '音频时长太短，无法为每行文本生成有效句段，请检查时长'
+        : ''
+  const willCreateSentences = lines.length > 0 && effectiveDurationMs !== null && !textError
+  const validFolder = folderStatus === 'ready' && folders.some((folder) => folder.id === folderId)
+  const canSave = !saving && !creatingFolder && title.trim() !== '' && validFolder &&
+    !titleError && !urlError && !manualError && !textError
+  const omittedText = lines.length > 0 && !willCreateSentences
 
-    let cancelled = false
-    setDurationState('reading')
+  function changeAudio(event) {
+    setAudioUrl(event.target.value)
+    setManualSeconds('')
+    setSaveError('')
+  }
 
-    const probe = new Audio()
-    probe.preload = 'metadata'
-
-    const done = (ms) => {
-      if (cancelled) return
-      if (ms && ms > 0) {
-        setDurationMs(ms)
-        setDurationState('ok')
-      } else {
-        setDurationMs(null)
-        setDurationState('failed')
-      }
-    }
-
-    probe.onloadedmetadata = () => {
-      // 跨域媒体有时给 Infinity —— 那不是真时长，当成读不到
-      const d = probe.duration
-      done(Number.isFinite(d) ? Math.round(d * 1000) : null)
-    }
-    probe.onerror = () => done(null)
-
-    // 8 秒还没消息就放弃，别把用户卡在这一步
-    const timer = setTimeout(() => done(null), 8000)
-
-    probe.src = url
-
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-      probe.src = ''
-    }
-  }, [audioUrl])
-
-  // 手动填的秒数（自动读不到时的退路）
-  const effectiveDurationMs =
-    durationState === 'ok' && durationMs
-      ? durationMs
-      : Number(manualSeconds) > 0
-        ? Math.round(Number(manualSeconds) * 1000)
-        : null
-
-  // 按行切句
-  const lines = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-
-  const willCreateSentences = lines.length > 0 && effectiveDurationMs !== null
-
-  const canSave =
-    !saving && title.trim() !== '' && title.trim().length <= MAX_TITLE_LENGTH && folderId !== ''
-
-  async function handleSave() {
-    if (!canSave) return
+  async function handleSave(event) {
+    event.preventDefault()
+    if (!canSave || savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     setSaveError('')
     setSaved(null)
-
     try {
-      // 句段时间**按「总时长 ÷ 行数」平均分配**。
-      // ⚠️ 这是**近似值**，不是按真实停顿切出来的。
-      //    真正「在静音处切分」要用 Web Audio API 读波形（PRD 的规划），
-      //    属后续功能。这里先用均分，让逐句播放**能跑起来**。
-      //    界面上会如实写清楚，不假装是精确切分。
+      // Preserve the existing uniform timing method; it is explicitly approximate.
+      const each = willCreateSentences ? Math.floor(effectiveDurationMs / lines.length) : 0
       const sentences = willCreateSentences
-        ? lines.map((line, i) => {
-            const each = Math.floor(effectiveDurationMs / lines.length)
-            return {
-              no: i + 1,
-              text: line,
-              startMs: i * each,
-              endMs: i === lines.length - 1 ? effectiveDurationMs : (i + 1) * each,
-            }
-          })
+        ? lines.map((line, index) => ({
+            no: index + 1,
+            text: line,
+            startMs: index * each,
+            endMs: index === lines.length - 1 ? effectiveDurationMs : (index + 1) * each,
+          }))
         : []
-
       const data = await createMaterial({
         title: title.trim(),
         folderId,
         audioUrl: audioUrl.trim() || null,
         sentences,
       })
-
-      setSaved({ material: data.material, sentenceCount: sentences.length })
-
-      // 保存成功后清空表单，方便连着建下一条
+      setSaved({ material: data.material, sentenceCount: sentences.length, omittedText })
       setTitle('')
       setAudioUrl('')
       setText('')
       setManualSeconds('')
-      setDurationMs(null)
-      setDurationState('idle')
-
-      // 文件夹里的材料数变了 → 首页要重新读才对。这里只刷新本页的文件夹列表，
-      // 首页每次进入都会重新请求，所以不用管。
-      onReloadFolders()
-    } catch (err) {
-      setSaveError(err.message)
+    } catch (error) {
+      setSaveError(error.message)
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
 
+  let saveHint = '保存后，可以继续添加或直接去练习。'
+  if (folderStatus !== 'ready') saveHint = '读取文件夹成功后才能保存。'
+  else if (!validFolder) saveHint = '先创建并选择一个文件夹。'
+  else if (!title.trim()) saveHint = '给材料起个标题，就可以保存了。'
+  else if (titleError || urlError || manualError || textError) saveHint = '请先修正上面标出的内容。'
+  else if (creatingFolder) saveHint = '正在创建文件夹，请稍等。'
+  else if (omittedText) saveHint = '尚无有效时长：本次只保存标题和音频，已填文本不会保存。'
+
   return (
-    <>
-      {/* ① 所属文件夹 —— 读真库（P1-5） */}
-      <div className="field">
-        <label htmlFor="folder-select">① 所属文件夹</label>
-        {folders === null ? (
-          <p className="hint">正在读取文件夹列表……</p>
-        ) : foldersError ? (
-          <p className="field-msg msg-error">
-            读取文件夹失败：{foldersError}
-            <button type="button" className="btn btn-small" onClick={onReloadFolders}>
-              重新读取
-            </button>
-          </p>
-        ) : folders.length === 0 ? (
-          <p className="hint">还没有任何文件夹。先在下面「② 新建文件夹」里加一个。</p>
-        ) : (
-          <select
-            id="folder-select"
-            className="input"
-            value={folderId}
-            onChange={(e) => setFolderId(e.target.value)}
-          >
-            {folders.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
+    <form className="material-form" onSubmit={handleSave} noValidate aria-label="新建材料" aria-busy={saving}>
+      <fieldset className="form-section" disabled={saving}>
+        <legend>音频与标题</legend>
+        <p className="section-description">先准备声音，再给它一个容易找到的名字。</p>
+        <div className="field">
+          <label htmlFor="audio-url">音频地址 <span className="field-optional">可选</span></label>
+          <input id="audio-url" className={'input' + (urlError ? ' input-invalid' : '')}
+            type="url" inputMode="url" placeholder="https://…/audio/lesson-1.mp3"
+            value={audioUrl} onChange={changeAudio} aria-invalid={Boolean(urlError)}
+            aria-describedby="audio-help audio-feedback" />
+          <p className="hint" id="audio-help">粘贴已上传音频的完整地址。不填时可以先保存标题，暂时不能播放。</p>
+          <div id="audio-feedback">
+            {urlError ? <p className="field-msg msg-error" role="alert">{urlError}</p> : (
+              <DurationStatus duration={duration} manualSeconds={manualSeconds}
+                manualError={manualError} onManualChange={(value) => { setManualSeconds(value); setSaveError('') }} />
+            )}
+          </div>
+          <details className="upload-help">
+            <summary>音频地址从哪里来？</summary>
+            <p>把音频上传到网站的音频目录，再粘贴完整地址。也可以使用能正常访问的音频外链。</p>
+            <p>已有音频文件时，在项目目录的命令行执行：</p>
+            <code>tcb hosting deploy "音频.mp3" audio/文件名.mp3</code>
+            <p>上传后，地址格式为：</p>
+            <code>https://xingho-read-d0gamjt5d859dbd81-1497420413.tcloudbaseapp.com/audio/文件名.mp3</code>
+          </details>
+        </div>
+        <div className="field">
+          <div className="field-label-row">
+            <label htmlFor="title">材料标题 <span className="field-required">必填</span></label>
+            <span className="character-count">{title.trim().length} / {MAX_TITLE_LENGTH}</span>
+          </div>
+          <input id="title" className={'input' + (titleError ? ' input-invalid' : '')}
+            placeholder="例如：Lesson 1 · A new beginning" value={title}
+            onChange={(event) => { setTitle(event.target.value); setSaveError('') }}
+            required aria-invalid={Boolean(titleError)} aria-describedby={titleError ? 'title-error' : undefined} />
+          {titleError && <p className="field-msg msg-error" id="title-error" role="alert">{titleError}</p>}
+        </div>
+      </fieldset>
+
+      <fieldset className="form-section" disabled={saving}>
+        <legend>放进文件夹</legend>
+        <p className="section-description">按课本或主题归类，下次练习时更好找。</p>
+        <div className="field">
+          <label htmlFor="folder-select">所属文件夹 <span className="field-required">必填</span></label>
+          {folderStatus === 'loading' ? (
+            <div className="folder-load-state" role="status">正在读取文件夹……</div>
+          ) : folderStatus === 'error' ? (
+            <div className="form-inline-error">
+              <p className="field-msg msg-error" role="alert">读取文件夹失败：{foldersError}</p>
+              <button type="button" className="btn btn-small" onClick={onReloadFolders}>重新读取文件夹</button>
+            </div>
+          ) : folders.length === 0 ? (
+            <p className="folder-load-state">还没有文件夹，在下面创建一个就好。</p>
+          ) : (
+            <select id="folder-select" className="input" value={folderId}
+              onChange={(event) => { setFolderId(event.target.value); setSaveError('') }} required disabled={creatingFolder}>
+              {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+            </select>
+          )}
+        </div>
+        <NewFolderField folders={folders} unavailable={folderStatus !== 'ready'} disabled={saving}
+          onBusyChange={setCreatingFolder} onCreated={(folder) => { onFolderCreated(folder); setFolderId(folder.id) }} />
+      </fieldset>
+
+      <fieldset className="form-section" disabled={saving}>
+        <legend>英文文本 <span className="field-optional">可选</span></legend>
+        <p className="section-description">有文本时，每行填写一句。不填也能保存音频材料。</p>
+        <div className="field">
+          <label htmlFor="text" className="text-label">对应的英文内容</label>
+          <textarea id="text" className={'input textarea' + (textError ? ' input-invalid' : '')}
+            rows={6} placeholder={'一行一句，例如：\nLearning a language takes time.\nSmall steps every day add up.'}
+            value={text} onChange={(event) => { setText(event.target.value); setSaveError('') }}
+            aria-invalid={Boolean(textError)} aria-describedby="sentence-preview" />
+          <div id="sentence-preview">
+            {textError ? <p className="field-msg msg-error" role="alert">{textError}</p>
+              : willCreateSentences ? (
+                <div className="sentence-preview" role="status">
+                  <p>将生成 <strong>{lines.length} 个句段</strong></p>
+                  <p>每句时间按总时长平均分配，是近似值，不是按真实停顿切分。</p>
+                </div>
+              ) : omittedText ? (
+                <p className="field-msg msg-warn" role="status">已填 {lines.length} 行文本，但还没有有效音频时长。
+                  这样保存<strong>不会保存文本，也不会生成句段</strong>。请先补充音频地址或时长。</p>
+              ) : <p className="hint">不填文本时，保存后可整段播放已有音频。</p>}
+          </div>
+        </div>
+      </fieldset>
+
+      <div className="material-save-area">
+        <div className="material-save-row">
+          <p className={'save-hint' + (omittedText ? ' msg-warn' : '')} id="save-hint">{saveHint}</p>
+          <button type="submit" className="btn btn-primary" disabled={!canSave} aria-describedby="save-hint">
+            {saving ? '保存中……' : '保存材料'}
+          </button>
+        </div>
+        {saveError && <p className="field-msg msg-error save-error" role="alert">保存失败：{saveError}。已填写的内容仍保留在这里。</p>}
+        {saved && (
+          <div className="save-success" role="status" tabIndex={-1} ref={resultRef}>
+            <strong>已保存「{saved.material.title}」</strong>
+            <p>{saved.sentenceCount > 0 ? saved.sentenceCount + ' 个句段，已准备好跟读。'
+              : saved.material.audioUrl ? '暂未生成句段，可以先整段播放。' : '标题已保存，当前没有音频，暂时不能播放。'}</p>
+            {saved.omittedText && <p>本次未保存英文文本，原因是保存时没有有效音频时长。</p>}
+            <a className="btn btn-small" href={practicePath(saved.material.id)}>打开这份材料</a>
+          </div>
         )}
-        <p className="hint">这份列表来自数据库，和首页看到的是同一份。</p>
       </div>
-
-      {/* ② 新建文件夹 —— 真写入 + 判重读真库（P1-2 / P1-11） */}
-      <NewFolderField
-        existingNames={(folders || []).map((f) => f.name)}
-        onCreated={(newFolder) => {
-          onReloadFolders()
-          setFolderId(newFolder.id)
-        }}
-      />
-
-      {/* ③ 音频地址 */}
-      <div className="field">
-        <label htmlFor="audio-url">③ 音频地址</label>
-        <input
-          id="audio-url"
-          className="input"
-          placeholder={AUDIO_URL_EXAMPLE}
-          value={audioUrl}
-          onChange={(e) => setAudioUrl(e.target.value)}
-        />
-        <p className="hint">
-          音频先用命令行传到云端，再把地址粘到这里。命令：
-          <code className="code-inline">tcb hosting deploy "音频.mp3" audio/文件名.mp3</code>
-        </p>
-        <DurationStatus
-          state={durationState}
-          durationMs={durationMs}
-          manualSeconds={manualSeconds}
-          onManualChange={setManualSeconds}
-        />
-      </div>
-
-      {/* ④ 材料标题 */}
-      <div className="field">
-        <label htmlFor="title">④ 材料标题</label>
-        <input
-          id="title"
-          className={
-            title.trim().length > MAX_TITLE_LENGTH ? 'input input-invalid' : 'input'
-          }
-          placeholder="例如：VOA 慢速英语 0902"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        {title.trim().length > MAX_TITLE_LENGTH && (
-          <p className="field-msg msg-error">
-            标题最多 {MAX_TITLE_LENGTH} 个字符，现在有 {title.trim().length} 个
-          </p>
-        )}
-      </div>
-
-      {/* ⑤ 英文文本 */}
-      <div className="field">
-        <label htmlFor="text">⑤ 英文文本（可选）</label>
-        <textarea
-          id="text"
-          className="input textarea"
-          rows={6}
-          placeholder={'一行一句。例如：\nLearning a language takes time.\nBut small steps every day add up.'}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <SentencePreview
-          lineCount={lines.length}
-          willCreate={willCreateSentences}
-          hasAudio={audioUrl.trim() !== ''}
-        />
-      </div>
-
-      <div className="actions">
-        <button type="button" className="btn btn-primary" disabled={!canSave} onClick={handleSave}>
-          {saving ? '保存中……' : '保存材料'}
-        </button>
-      </div>
-
-      {saveError && <p className="field-msg msg-error">保存失败：{saveError}</p>}
-
-      {saved && (
-        <p className="field-msg msg-ok">
-          已保存「{saved.material.title}」（编号 {saved.material.id}，
-          {saved.sentenceCount > 0 ? `${saved.sentenceCount} 个句段` : '暂无句段'}）。
-          <a href={`#/practice/${saved.material.id}`}>去练习页看看</a>
-        </p>
-      )}
-    </>
+    </form>
   )
 }
 
-// ── 音频时长状态 ─────────────────────────────────────────
-
-function DurationStatus({ state, durationMs, manualSeconds, onManualChange }) {
-  if (state === 'idle') return null
-
-  if (state === 'reading') {
-    return <p className="hint">正在读取音频时长……</p>
-  }
-
-  if (state === 'ok') {
-    const total = Math.round(durationMs / 1000)
-    const m = Math.floor(total / 60)
-    const s = String(total % 60).padStart(2, '0')
-    return (
-      <p className="field-msg msg-ok">
-        已读到音频时长 {m}:{s}（{total} 秒）。句段时间会按「总时长 ÷ 文本行数」平均分配。
-      </p>
-    )
-  }
-
-  // failed
-  return (
-    <>
-      <p className="field-msg msg-error">
-        读不到这个地址的音频时长。可能原因：地址打不开、不是音频文件，或服务器不允许跨站读取。
-      </p>
-      <p className="hint">
-        可以自己填总时长（秒）继续 —— 填了才能生成句段、才能逐句播放：
-        <input
-          className="input input-inline"
-          type="number"
-          min="1"
-          placeholder="例如 204"
-          value={manualSeconds}
-          onChange={(e) => onManualChange(e.target.value)}
-        />
-      </p>
-    </>
-  )
-}
-
-// ── 句段预览 ─────────────────────────────────────────────
-
-function SentencePreview({ lineCount, willCreate, hasAudio }) {
-  if (lineCount === 0) {
-    return <p className="hint">填了文本，练习页会在每一句旁边显示对应文字。不填也能保存。</p>
-  }
-  if (willCreate) {
-    return (
-      <p className="field-msg msg-ok">
-        会按 {lineCount} 行切成 {lineCount} 个句段。
-        ⚠️ 每句的时间是<strong>按总时长平均分</strong>的近似值，不是按真实停顿切出来的 ——
-        真正的「在静音处切分」要用 Web Audio API 读波形，属后续功能。
-    </p>
-    )
+function DurationStatus({ duration, manualSeconds, manualError, onManualChange }) {
+  if (duration.status === 'idle') return null
+  if (duration.status === 'reading') return <p className="field-msg duration-reading" role="status">正在读取音频时长……</p>
+  if (duration.status === 'ok') {
+    const seconds = Math.round(duration.ms / 1000)
+    const clock = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0')
+    return <p className="field-msg msg-ok" role="status">已读到音频时长 {clock}（{seconds} 秒）</p>
   }
   return (
-    <p className="field-msg msg-warn">
-      填了 {lineCount} 行文本，但{hasAudio ? '还没读到音频时长' : '还没填音频地址'}
-      —— 这样保存的话<strong>不会生成句段</strong>，练习页只能看到标题和一句「还没有句段」的说明。
-    </p>
-  )
-}
-
-// ── ② 新建文件夹：带即时校验 + 真写入 ─────────────────────
-//
-// 反馈设计（对应 Day 11 板块① 的三类反馈）：
-//   输入中       → 不判定，只把上一次的结论清掉（不打断打字）
-//   输入停止后   → 边框变色 + 一行文字说明（结果反馈）
-//   点「新建」前 → 名字不可用时按钮禁用（结果反馈最高级：让误操作不可能发生）
-//
-// ⚠️ Day 27 起**真的会写入数据库**了。所以文案也换了：
-//    以前只能说「这个名字可以用」（因为确实没写），现在能说「已创建」。
-
-function NewFolderField({ existingNames, onCreated }) {
-  const [name, setName] = useState('')
-  const [checked, setChecked] = useState(null) // null = 还没判定
-  const [created, setCreated] = useState(null) // 刚创建成功的名字
-  const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState('')
-
-  // ⚠️ 判重名单从 props 来（真库），不再从 mock —— 这就是 P1-11（Bug D2）的修法。
-  //    用 useRef 存一份最新的，好让 setTimeout 回调读到当前值
-  //    （effect 依赖数组里放 existingNames 会导致每读一次列表就重置定时器）。
-  const namesRef = useRef(existingNames)
-  useEffect(() => {
-    namesRef.current = existingNames
-  }, [existingNames])
-
-  // 输入停止 400ms 后再判定；下次输入会先把定时器清掉，所以连续打字不会报错
-  useEffect(() => {
-    const trimmed = name.trim()
-
-    if (trimmed === '') {
-      setChecked(null)
-      return
-    }
-
-    const timer = setTimeout(() => {
-      // 先判长度，再判重名 —— 顺序有讲究：
-      // 名字太长时「重不重名」已经不重要了，因为后端连长度这一关都过不了。
-      // 先报最能说明问题的那条。
-      if (trimmed.length > MAX_NAME_LENGTH) {
-        setChecked('too-long')
-        return
-      }
-      setChecked(namesRef.current.includes(trimmed) ? 'duplicate' : 'ok')
-    }, CHECK_DELAY)
-
-    return () => clearTimeout(timer)
-  }, [name])
-
-  // 重新输入时，把上一次的确认提示清掉
-  function handleChange(e) {
-    setName(e.target.value)
-    setCreated(null)
-    setCreateError('')
-  }
-
-  const canConfirm = checked === 'ok' && !creating
-
-  async function handleConfirm() {
-    if (!canConfirm) return
-    setCreating(true)
-    setCreateError('')
-
-    try {
-      const data = await createFolder({
-        // id 由前端生成：契约里 POST /api/folders 的 id 是客户端给的。
-        // 用时间戳 + 随机后缀，避免同一毫秒连点两次撞车。
-        id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-        name: name.trim(),
-      })
-      setCreated(data.folder.name)
-      setName('')
-      setChecked(null)
-      onCreated(data.folder)
-    } catch (err) {
-      // ⚠️ **不吞错误**。后端可能回 409（同名）—— api.js 已经把它变成中文，
-      //    直接显示。这就是「不许假成功」：失败必须说出来。
-      setCreateError(err.message)
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  return (
-    <div className="field">
-      <label htmlFor="new-folder">② 新建文件夹</label>
-      <div className="row">
-        <input
-          id="new-folder"
-          className={
-            checked === 'duplicate' || checked === 'too-long'
-              ? 'input input-invalid'
-              : checked === 'ok'
-                ? 'input input-valid'
-                : 'input'
-          }
-          placeholder="输入文件夹名称"
-          value={name}
-          onChange={handleChange}
-        />
-        <button type="button" className="btn btn-ghost" disabled={!canConfirm} onClick={handleConfirm}>
-          {creating ? '创建中……' : '新建'}
-        </button>
-      </div>
-
-      <FieldMessage checked={checked} created={created} createError={createError} name={name} />
+    <div className="duration-fallback">
+      <p className="field-msg msg-error" role="alert">没能读到音频时长。请检查地址是否能打开，或手动填写总时长。</p>
+      <label htmlFor="manual-seconds">手动填写时长 <span className="field-optional">秒</span></label>
+      <input id="manual-seconds" className={'input' + (manualError ? ' input-invalid' : '')}
+        type="number" min="0.001" step="any" placeholder="例如：120"
+        value={manualSeconds} onChange={(event) => onManualChange(event.target.value)}
+        aria-invalid={Boolean(manualError)} aria-describedby="manual-help" />
+      <p className={'hint' + (manualError ? ' msg-error' : '')} id="manual-help">
+        {manualError || '手动时长只用于分配句段时间，不能让失效的音频地址恢复播放。'}
+      </p>
     </div>
   )
 }
 
-// 结果反馈：一行文字说清「为什么」和「下一步」。
-// 文案的区别很重要 —— 「名字可以用」是校验结论，「已创建」是功能结论，两者不能混。
-function FieldMessage({ checked, created, createError, name }) {
-  if (createError) {
-    return <p className="field-msg msg-error">没能创建：{createError}</p>
+function NewFolderField({ folders, unavailable, disabled, onBusyChange, onCreated }) {
+  const [expanded, setExpanded] = useState(false)
+  const [name, setName] = useState('')
+  const [checkedName, setCheckedName] = useState(null)
+  const [created, setCreated] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState('')
+  const busyRef = useRef(false)
+  const trimmed = name.trim()
+
+  useEffect(() => {
+    if (!trimmed || unavailable) {
+      setCheckedName(null)
+      return
+    }
+    const timer = setTimeout(() => setCheckedName(trimmed), CHECK_DELAY)
+    return () => clearTimeout(timer)
+  }, [name, trimmed, unavailable])
+
+  const checked = trimmed && checkedName === trimmed && !unavailable
+  const nameError = checked
+    ? trimmed.length > MAX_NAME_LENGTH ? '名字最多 30 个字符，现在有 ' + trimmed.length + ' 个'
+      : folders.some((folder) => folder.name === trimmed) ? '已有同名文件夹，请换一个名字' : ''
+    : ''
+  const canCreate = Boolean(checked && !nameError && !creating && !disabled)
+  const needsFirstFolder = !unavailable && folders.length === 0
+  const showFields = expanded || needsFirstFolder
+
+  async function handleCreate() {
+    if (!canCreate || busyRef.current) return
+    busyRef.current = true
+    setCreating(true)
+    onBusyChange(true)
+    setCreateError('')
+    setCreated('')
+    try {
+      const data = await createFolder({
+        id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        name: trimmed,
+      })
+      onCreated(data.folder)
+      setCreated(data.folder.name)
+      setName('')
+      setCheckedName(null)
+    } catch (error) {
+      setCreateError(error.message)
+    } finally {
+      busyRef.current = false
+      setCreating(false)
+      onBusyChange(false)
+    }
   }
-  if (created) {
-    return <p className="field-msg msg-ok">已创建「{created}」，并已自动选中。</p>
-  }
-  if (checked === 'too-long') {
-    // 把「上限」和「现在多少个」都写出来 —— 只说「太长了」用户不知道要删多少
-    return (
-      <p className="field-msg msg-error">
-        名字最多 {MAX_NAME_LENGTH} 个字符，现在有 {name.trim().length} 个
-      </p>
-    )
-  }
-  if (checked === 'duplicate') {
-    return <p className="field-msg msg-error">已有同名文件夹，换一个名字</p>
-  }
-  if (checked === 'ok') {
-    return <p className="field-msg msg-ok">这个名字可以用，点「新建」就会真的建到数据库里</p>
-  }
-  if (name.trim() !== '') {
-    return <p className="field-msg">正在检查……</p>
-  }
-  return null
+
+  return (
+    <div className="new-folder-inline">
+      {needsFirstFolder ? <p className="hint">创建第一个文件夹</p> : (
+        <button type="button" className="new-folder-toggle" aria-expanded={showFields}
+          aria-controls="new-folder-fields" disabled={disabled || creating || unavailable}
+          onClick={() => setExpanded((open) => !open)}>
+          {showFields ? '收起新建文件夹' : '＋ 新建一个文件夹'}
+        </button>
+      )}
+      {showFields && (
+        <div id="new-folder-fields" className="new-folder-fields">
+          <label htmlFor="new-folder">文件夹名称</label>
+          <div className="row">
+            <input id="new-folder" className={'input' + (nameError ? ' input-invalid' : '')}
+              placeholder="例如：我的课本" value={name} disabled={disabled || creating || unavailable}
+              onChange={(event) => { setName(event.target.value); setCheckedName(null); setCreated(''); setCreateError('') }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  if (!event.nativeEvent.isComposing) handleCreate()
+                }
+              }}
+              aria-invalid={Boolean(nameError)} aria-describedby="new-folder-feedback" />
+            <button type="button" className="btn btn-small" disabled={!canCreate} onClick={handleCreate}>
+              {creating ? '创建中……' : '创建文件夹'}
+            </button>
+          </div>
+          <p className={'field-msg' + (nameError ? ' msg-error' : '')} id="new-folder-feedback" aria-live="polite">
+            {unavailable ? '读取文件夹列表后才能检查名称。' : nameError || (checked ? '这个名称可以使用。' : trimmed ? '正在检查名称……' : '最多 30 个字符。')}
+          </p>
+        </div>
+      )}
+      {createError && <p className="field-msg msg-error" role="alert">创建失败：{createError}</p>}
+      {created && <p className="field-msg msg-ok" role="status">已创建「{created}」，并已选中。</p>}
+    </div>
+  )
 }

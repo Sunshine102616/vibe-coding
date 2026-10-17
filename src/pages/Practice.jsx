@@ -1,50 +1,5 @@
-// 练习页
-//
-// Day 7  ：骨架（句子列表、播放控制、跟读录音的界面）
-// Day 13 ：补齐四种状态 —— 加载中 / 找不到 / 读取失败 / 正常
-// Day 27 ：**接真数据 + 播放控制真的能用**（P1-7 / P1-8 / P1-3）
-// Day 27 追加：**没有句段的材料也能「整段播放」**（48 条星一班正是这种 —— 只有音频、没有文本）
-//
-// 【Day 27 追加改了什么，为什么】
-//   改之前：三个按钮都是 `disabled={!hasAudio || !hasSentences}`，
-//   于是「只有音频、没有句段」的材料**一个按钮都点不动** ——
-//   音频明明加载好了（duration 40s / readyState 4），用户却完全听不到。
-//   ⚠️ 而页面上只有一句「所以没法逐句播放」，**没说「其实也放不出来」** ——
-//      用户点播放没反应，会自己编个理由然后放弃（Day 14「沉默的失败」）。
-//   改之后：**有没有音频**决定能不能播；**有没有句段**只决定能不能逐句。
-//      · 有句段 → 原来的逐句 / 单句循环（不变）
-//      · 没句段 → 整段播放，播放/暂停随时可用，状态栏显示 `整段播放 0:12 / 0:40`
-//   为什么不显示浏览器自带的 `<audio controls>`：那会多出一套「和上面按钮不一致」的控件，
-//   而本项目刻意不显示它（见下面渲染部分的说明）。所以用同一个按钮 + 一行进度。
-//
-// 【今天改了什么，为什么】
-//   以前：句子列表是写死的 `SENTENCES` 五句英文，播放按钮点了没反应。
-//   现在：句子来自 `GET /api/materials/:id` 的 `sentences`，播放真的能播。
-//
-//   ⚠️ **句子列表必须来自真数据**，这是 Day 24「假成功」那类问题的同一族：
-//      界面显示「共 6 句」却列出 5 句写死的假句子，数字和内容对不上，
-//      而且**控制台一条报错都没有** —— 只能靠「逐条对照」发现。
-//
-// 【「句段」是什么，为什么不需要一堆音频文件】
-//   一条材料只有 **1 个音频文件**（`materials.audio_url`）。
-//   句段是**在这一个文件里的时间段**（`start_ms` / `end_ms`）。
-//   播放第 3 句 = 把播放位置跳到 `startMs/1000` 秒，播到 `endMs/1000` 停。
-//   → 所以「切句段」不需要任何音频处理，只是改 `audio.currentTime`。
-//
-// 【播放方式有两种，靠「点击同一句两次」切换（PRD F2）】
-//   点某一句         → 单句循环（只反复播这一句，视觉标识停在这句不动）
-//   再点同一句       → 取消循环，从这句起**连续播放**后面的句段
-//   单句循环按钮     → 同上，给不想点句子的人一个明确入口
-
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ROUTES } from '../useHashRoute.js'
-
-// ── 页面分发：五种状态 ───────────────────────────────────
-//
-// ⚠️ `'not-found'` 和 `'error'` 必须分开显示（App.jsx 的 usePracticeMaterial 说明过原因）：
-//   前者是「这条材料不存在」（链接失效 → 换个材料就好），
-//   后者是「现在读不到」（网络/服务问题 → 重试可能就好了）。
-//   合成一种，用户会去做错误的下一步。
 
 export default function Practice({ status, material, errorMessage, materialId, onRetry }) {
   if (status === 'loading') return <LoadingView />
@@ -52,546 +7,466 @@ export default function Practice({ status, material, errorMessage, materialId, o
   if (status === 'idle' || status === 'not-found') {
     return <NotFoundView materialId={materialId} isIdle={status === 'idle'} />
   }
-  return <ReadyView material={material} />
+  return <ReadyView key={material.id} material={material} />
 }
 
-// ── 正常状态：播放控制 + 句子列表 ────────────────────────
-
-/**
- * 毫秒 → `"1:05"`。只给「整段播放」的进度显示用。
- *
- * ⚠️ 为什么要显示进度：没有句段时，点「播放」界面**原本什么都不变** ——
- *    用户不知道到底在播没有，会以为自己点坏了（Day 14 的「沉默的失败」）。
- *    有了「0:12 / 0:40」，一眼就知道在走。
- */
 function formatTime(ms) {
-  if (!Number.isFinite(ms) || ms < 0) ms = 0
-  const total = Math.floor(ms / 1000)
-  const m = Math.floor(total / 60)
-  const s = total % 60
-  return `${m}:${String(s).padStart(2, '0')}`
+  const seconds = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0
+  return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0')
+}
+
+function closeStream(stream) {
+  stream?.getTracks().forEach((track) => track.stop())
 }
 
 function ReadyView({ material }) {
   const sentences = material.sentences || []
   const hasAudio = Boolean(material.audioUrl)
   const hasSentences = sentences.length > 0
-
-  const audioRef = useRef(null)
-  const rafRef = useRef(0)
-
   const [playing, setPlaying] = useState(false)
-  const [currentNo, setCurrentNo] = useState(hasSentences ? sentences[0].no : null)
+  const [playPending, setPlayPending] = useState(false)
+  const [buffering, setBuffering] = useState(false)
+  const [completed, setCompleted] = useState(false)
+  const [audioStatus, setAudioStatus] = useState(hasAudio ? 'loading' : 'empty')
+  const [currentNo, setCurrentNo] = useState(sentences[0]?.no ?? null)
   const [loopOne, setLoopOne] = useState(false)
   const [playError, setPlayError] = useState('')
-
-  // 【Day 27 追加】没有句段时只能「整段播放」，这两个 state 只用来显示进度。
-  //   有句段时用不上 —— 那时状态栏显示的是「第 N 句」。
   const [progressMs, setProgressMs] = useState(0)
   const [durationMs, setDurationMs] = useState(0)
-
-  // 跟读录音（PRD F3）：句子序号 → 录音地址
   const [recordings, setRecordings] = useState({})
-  const [recordingNo, setRecordingNo] = useState(null)
-  const [recError, setRecError] = useState('')
-  const recorderRef = useRef(null)
-  const chunksRef = useRef([])
+  const [capture, setCapture] = useState({ phase: 'idle', no: null })
+  const [recError, setRecError] = useState(null)
+  const [recFeedback, setRecFeedback] = useState(null)
 
-  // ── 【为什么要把这几个值复制进 ref】
-  //   requestAnimationFrame 的回调是「注册时那一次渲染的闭包」，
-  //   它会一直跑，却读不到之后 setState 的新值 —— 这就是经典的「闭包读到旧值」。
-  //   把最新值放进 ref，回调就能随时读到。
-  const sentencesRef = useRef(sentences)
+  const audioRef = useRef(null)
   const currentNoRef = useRef(currentNo)
-  const loopOneRef = useRef(loopOne)
-  useEffect(() => { sentencesRef.current = sentences }, [sentences])
-  useEffect(() => { currentNoRef.current = currentNo }, [currentNo])
-  useEffect(() => { loopOneRef.current = loopOne }, [loopOne])
+  const loopOneRef = useRef(false)
+  const playRequestRef = useRef(0)
+  const mountedRef = useRef(true)
+  const recorderRef = useRef(null)
+  const streamRef = useRef(null)
+  const captureBusyRef = useRef(false)
+  const recordingsRef = useRef({})
+  const replaysRef = useRef(new Map())
+  const replayCallbacksRef = useRef(new Map())
 
-  const stop = useCallback(() => {
-    const audio = audioRef.current
-    if (audio) audio.pause()
-    setPlaying(false)
-  }, [])
-
-  const jumpTo = useCallback((item, andPlay) => {
-    const audio = audioRef.current
-    if (!audio) return
-    setCurrentNo(item.no)
-    audio.currentTime = item.startMs / 1000
-    if (andPlay) {
-      audio
-        .play()
-        .then(() => setPlayError(''))
-        .catch(() => setPlayError('浏览器拦下了这次播放，请再点一次播放按钮。'))
-      setPlaying(true)
+  function replayRef(no) {
+    if (!replayCallbacksRef.current.has(no)) {
+      replayCallbacksRef.current.set(no, (element) => {
+        if (element) replaysRef.current.set(no, element)
+        else { replaysRef.current.get(no)?.pause(); replaysRef.current.delete(no) }
+      })
     }
+    return replayCallbacksRef.current.get(no)
+  }
+
+  function selectSentence(no) {
+    currentNoRef.current = no
+    setCurrentNo(no)
+  }
+  function selectLoop(value) {
+    loopOneRef.current = value
+    setLoopOne(value)
+  }
+  const stop = useCallback(() => {
+    playRequestRef.current += 1
+    audioRef.current?.pause()
+    setPlaying(false)
+    setPlayPending(false)
+    setBuffering(false)
+  }, [])
+  const pauseReplays = useCallback((exceptNo) => {
+    replaysRef.current.forEach((audio, no) => { if (no !== exceptNo) audio.pause() })
   }, [])
 
-  // ── 播放引擎 ────────────────────────────────────────────
-  //
-  // 【为什么用 requestAnimationFrame，不用 <audio> 的 timeupdate 事件】
-  //   timeupdate 每秒只触发约 4 次 → 判断「这一句播完了没有」会晚最多 0.25 秒，
-  //   加上回到起点重播的开销，单句循环的两次播放间隔就可能超过 PRD F2 要求的 0.5 秒。
-  //   rAF 跟屏幕刷新同步（约 60 次/秒），边界判断精度足够。
-  useEffect(() => {
+  const playOriginal = useCallback(async () => {
     const audio = audioRef.current
-    // ⚠️ 没有句段时不跑这个循环 —— 它是为「句段边界」服务的。
-    //    那种情况由 <audio> 的 onTimeUpdate 更新进度（见下面的渲染部分）。
-    //    不加这个判断的话：list 是空的 → find 返回 undefined → 立刻 setPlaying(false)，
-    //    按钮会在点下去的一瞬间弹回「播放」，看起来像点了没反应。
-    if (!audio || !playing || !hasSentences) return
+    if (!audio || captureBusyRef.current) return
+    const request = ++playRequestRef.current
+    pauseReplays()
+    setPlayPending(true)
+    setCompleted(false)
+    setPlayError('')
+    try {
+      await audio.play()
+      if (!mountedRef.current || request !== playRequestRef.current) return
+      setPlaying(true)
+      setPlayPending(false)
+    } catch (error) {
+      if (!mountedRef.current || request !== playRequestRef.current) return
+      setPlaying(false)
+      setPlayPending(false)
+      setBuffering(false)
+      setPlayError(error.name === 'NotAllowedError'
+        ? '浏览器暂未允许播放，请再点一次播放按钮。'
+        : '没能播放这段音频，请检查网络和音频地址后再试。')
+    }
+  }, [pauseReplays])
 
-    let stopped = false
-
-    const tick = () => {
-      if (stopped) return
-
-      const list = sentencesRef.current
-      const item = list.find((s) => s.no === currentNoRef.current)
-      if (!item) {
-        setPlaying(false)
-        return
+  const seekTo = useCallback((item) => {
+    const audio = audioRef.current
+    if (!audio) return false
+    try {
+      if (Number.isFinite(audio.duration) && audio.duration > 0 && item.startMs / 1000 >= audio.duration) {
+        throw new Error('outside-duration')
       }
+      audio.currentTime = item.startMs / 1000
+      setCompleted(false)
+      setProgressMs(item.startMs)
+      currentNoRef.current = item.no
+      setCurrentNo(item.no)
+      return true
+    } catch {
+      stop()
+      setPlayError('无法定位到这一句，请检查音频是否加载完成，以及句段时间是否在音频范围内。')
+      return false
+    }
+  }, [stop])
 
-      const nowMs = audio.currentTime * 1000 // 毫秒，和 startMs / endMs 同一单位
+  const advance = useCallback(() => {
+    const audio = audioRef.current
+    const index = sentences.findIndex((item) => item.no === currentNoRef.current)
+    const target = loopOneRef.current ? sentences[index] : sentences[index + 1]
+    if (index < 0 || !target) { stop(); setCompleted(true); return false }
+    if (!seekTo(target)) return false
+    // During normal playback seeking preserves playback. At the file's end it must restart.
+    if (audio.paused || audio.ended) playOriginal()
+    return true
+  }, [sentences, seekTo, stop, playOriginal])
 
-      if (nowMs >= item.endMs) {
-        if (loopOneRef.current) {
-          // 单句循环：回到这一句的起点接着播（视觉标识不动）
-          audio.currentTime = item.startMs / 1000
-          audio.play().catch(() => {})
-        } else {
-          // 连续播放：切下一句
-          const idx = list.findIndex((s) => s.no === item.no)
-          const next = list[idx + 1]
-          if (!next) {
-            // 已是最后一句 → 停下，**不回到开头**（PRD F2 明确要求）
-            audio.pause()
-            setPlaying(false)
-            return
-          }
-          setCurrentNo(next.no)
-          audio.currentTime = next.startMs / 1000
-          audio.play().catch(() => {})
+  useEffect(() => {
+    if (!playing || !hasSentences) return
+    let frame
+    const tick = () => {
+      const audio = audioRef.current
+      const item = sentences.find((sentence) => sentence.no === currentNoRef.current)
+      if (!audio) { stop(); return }
+      // A manual seek may reach the audio after the last sentence. Let that tail play.
+      if (item && audio.currentTime * 1000 >= item.endMs && !advance()) return
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [playing, hasSentences, sentences, advance, stop])
+
+  useEffect(() => {
+    mountedRef.current = true
+    const originalAudio = audioRef.current
+    return () => {
+      mountedRef.current = false
+      playRequestRef.current += 1
+      originalAudio?.pause()
+      const recorder = recorderRef.current
+      if (recorder) {
+        recorder.ondataavailable = null
+        recorder.onstop = null
+        recorder.onerror = null
+        if (recorder.state !== 'inactive') {
+          try { recorder.stop() } catch { /* Tracks are closed below regardless. */ }
         }
       }
-
-      rafRef.current = requestAnimationFrame(tick)
-    }
-
-    rafRef.current = requestAnimationFrame(tick)
-    return () => {
-      stopped = true
-      cancelAnimationFrame(rafRef.current)
-    }
-  }, [playing, hasSentences])
-
-  // 离开页面时把定时器和麦克风都收干净（不然会一直占着麦克风指示灯）
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(rafRef.current)
-      if (recorderRef.current) {
-        try { recorderRef.current.stop() } catch { /* 已经停了 */ }
-      }
+      closeStream(streamRef.current)
+      replaysRef.current.forEach((audio) => audio.pause())
+      Object.values(recordingsRef.current).forEach((recording) => URL.revokeObjectURL(recording.url))
     }
   }, [])
-
-  // ── 播放控制 ────────────────────────────────────────────
 
   function togglePlay() {
     const audio = audioRef.current
-    if (!audio) return
-
-    // ── 情况一：这条材料**没有句段** → 整段播放（Day 27 追加）──────
-    //
-    // 【为什么要有这一支】
-    //   没有句段时，没有任何「边界」要判断，所以就是最普通的 播放/暂停。
-    //   ⚠️ 以前这里写的是 `if (!hasAudio || !hasSentences) return` —— 就算
-    //      按钮被点到，函数也会立刻返回，**什么都不会发生**。
-    //      而按钮同时是 disabled，用户看到的是「灰的、点了没用」，
-    //      却没有任何一句话告诉他为什么（Day 14「沉默的失败」）。
-    //   → 现在：只要有音频就能播；有没有句段只决定「能不能逐句」。
-    if (!hasSentences) {
-      if (playing) {
-        audio.pause()
-        setPlaying(false)
-      } else {
-        audio
-          .play()
-          .then(() => { setPlayError(''); setPlaying(true) })
-          .catch(() => setPlayError('浏览器拦下了这次播放，请再点一次播放按钮。'))
-      }
-      return
+    if (!audio || captureBusyRef.current) return
+    if (playing || playPending) { stop(); return }
+    if (hasSentences && currentNoRef.current !== null) {
+      const item = sentences.find((sentence) => sentence.no === currentNoRef.current) || sentences[0]
+      const now = audio.currentTime * 1000
+      if ((now < item.startMs || now >= item.endMs) && !seekTo(item)) return
+    } else if (audio.ended) {
+      audio.currentTime = 0
+      if (hasSentences) selectSentence(sentences[0].no)
     }
-
-    if (playing) {
-      audio.pause()
-      setPlaying(false)
-      return
-    }
-
-    // 恢复播放时**保持暂停前的播放方式**（PRD F2）：
-    // loopOne 和 currentNo 都是 state，本来就没被清掉，所以天然满足。
-    const item = sentences.find((s) => s.no === currentNo) || sentences[0]
-    const nowMs = audio.currentTime * 1000
-    // 播放位置已经跑出这一句了（比如暂停后手动拖过），先拉回起点
-    if (nowMs < item.startMs || nowMs >= item.endMs) {
-      audio.currentTime = item.startMs / 1000
-    }
-    audio
-      .play()
-      .then(() => { setPlayError(''); setPlaying(true) })
-      .catch(() => setPlayError('浏览器拦下了这次播放，请再点一次播放按钮。'))
+    playOriginal()
   }
 
-  // 点某一句：第一次 = 单句循环；再点同一句 = 取消循环、连续播放
   function handleSentenceClick(item) {
-    if (!hasAudio) return
-    if (currentNo === item.no && loopOne) {
-      setLoopOne(false)
-      jumpTo(item, true)
-    } else {
-      setLoopOne(true)
-      jumpTo(item, true)
+    if (!hasAudio || captureBusyRef.current) return
+    selectLoop(!(currentNoRef.current === item.no && loopOneRef.current))
+    if (seekTo(item)) playOriginal()
+  }
+
+  function step(delta) {
+    if (!hasAudio || captureBusyRef.current) return
+    const index = sentences.findIndex((item) => item.no === currentNoRef.current)
+    const target = sentences[index + delta]
+    if (target && seekTo(target)) playOriginal()
+  }
+
+  function seekPlayback(event) {
+    const audio = audioRef.current
+    if (!audio || !durationMs || captureBusyRef.current || audioStatus === 'error') return
+    const targetMs = Math.min(durationMs, Math.max(0, Number(event.target.value)))
+    try {
+      const ranges = audio.seekable
+      if (ranges.length && !Array.from({ length: ranges.length }, (_, index) =>
+        targetMs / 1000 >= ranges.start(index) && targetMs / 1000 <= ranges.end(index) + 0.1
+      ).some(Boolean)) throw new Error('not-seekable')
+      audio.currentTime = targetMs / 1000
+      if (hasSentences) {
+        const target = sentences.find((sentence) => targetMs < sentence.endMs)
+        if (target?.no !== currentNoRef.current) selectLoop(false)
+        selectSentence(target?.no ?? null)
+      }
+      setProgressMs(targetMs)
+      setCompleted(false)
+      setPlayError('')
+    } catch {
+      setProgressMs(audio.currentTime * 1000)
+      setPlayError('暂时不能跳到这个位置，请等待音频加载完成后再试。')
     }
   }
 
-  // 上一句 / 下一句：切到相邻句段并**立即从该句开始播放**（PRD F2）
-  // ⚠️ 没有句段时没有「相邻句段」可言 —— 这两个按钮也是 disabled 的，
-  //    这里再挡一次只是防御（万一将来有人把 disabled 去掉）。
-  function step(delta) {
-    if (!hasAudio || !hasSentences) return
-    const idx = sentences.findIndex((s) => s.no === currentNo)
-    const target = sentences[idx + delta]
-    if (!target) return
-    jumpTo(target, true)
+  function finishCapture() {
+    const recorder = recorderRef.current
+    if (recorder) {
+      recorder.ondataavailable = null
+      recorder.onstop = null
+      recorder.onerror = null
+    }
+    recorderRef.current = null
+    closeStream(streamRef.current)
+    streamRef.current = null
+    captureBusyRef.current = false
+    if (mountedRef.current) setCapture({ phase: 'idle', no: null })
   }
-
-  // ── 跟读录音（PRD F3）────────────────────────────────────
 
   async function startRecording(no) {
-    // 录音前先停原声 —— 不然麦克风会把扬声器的声音一起录进去
+    if (captureBusyRef.current) return
     stop()
-    setRecError('')
-
+    pauseReplays()
+    selectSentence(no)
+    setRecError(null)
+    setRecFeedback(null)
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setRecError({ no, message: '当前浏览器无法录音。请在支持麦克风录音的浏览器中，通过 HTTPS 或本机地址打开。' })
+      return
+    }
+    captureBusyRef.current = true
+    setCapture({ phase: 'requesting', no })
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (!mountedRef.current) { closeStream(stream); return }
+      streamRef.current = stream
       const recorder = new MediaRecorder(stream)
-      chunksRef.current = []
-
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
+      const chunks = []
+      let failed = false
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size > 0) chunks.push(event.data)
       }
-
+      recorder.onerror = () => {
+        failed = true
+        if (mountedRef.current) setRecError({ no, message: '录音中断了，这次没有保存。请检查麦克风后重新录制。' })
+        if (recorder.state !== 'inactive') {
+          try { recorder.stop() } catch { /* Close the stream even if stopping fails. */ }
+        }
+        finishCapture()
+      }
       recorder.onstop = () => {
-        // 录完必须把音轨关掉，否则浏览器标签页上的「麦克风使用中」指示灯一直亮
-        stream.getTracks().forEach((t) => t.stop())
-
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' })
-
-        setRecordings((prev) => {
-          // ⚠️ 释放上一条的地址，否则每录一次就泄漏一块内存
-          if (prev[no] && prev[no].url) URL.revokeObjectURL(prev[no].url)
-          // 同一句再录一次 → **只保留最近一次**（PRD F3 明确要求）
-          return { ...prev, [no]: { url: URL.createObjectURL(blob) } }
-        })
-        setRecordingNo(null)
+        if (mountedRef.current && !failed) {
+          try {
+            const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
+            if (!blob.size) throw new Error('empty-recording')
+            const url = URL.createObjectURL(blob)
+            const previous = recordingsRef.current[no]
+            replaysRef.current.get(no)?.pause()
+            if (previous) URL.revokeObjectURL(previous.url)
+            const next = { ...recordingsRef.current, [no]: { url } }
+            recordingsRef.current = next
+            setRecordings(next)
+            setRecFeedback({ no, message: '已录好，可以回听。' })
+          } catch {
+            setRecError({ no, message: '这次没能生成录音，原有录音仍保留。请检查麦克风后再试。' })
+          }
+        }
+        finishCapture()
       }
-
-      recorder.start()
       recorderRef.current = recorder
-      setRecordingNo(no)
+      recorder.start()
+      setCapture({ phase: 'recording', no })
     } catch {
-      // 用户拒绝授权、没有麦克风、非 HTTPS 页面……都会走到这里。
-      // ⚠️ 不写死原因，只告诉他「去哪儿看」—— 猜错原因会把人带偏（Day 14 的教训）
-      setRecError(
-        '没能打开麦克风。请检查浏览器地址栏左侧的权限图标，确认本站可以使用麦克风。'
-      )
+      finishCapture()
+      if (mountedRef.current) setRecError({ no, message: '没能打开麦克风。请检查浏览器地址栏左侧的权限设置，确认本站可以使用麦克风。' })
     }
   }
 
   function stopRecording() {
-    if (recorderRef.current) {
-      try { recorderRef.current.stop() } catch { /* 已经停了 */ }
-      recorderRef.current = null
+    const recorder = recorderRef.current
+    if (!recorder || recorder.state === 'inactive') return
+    setCapture((current) => ({ ...current, phase: 'saving' }))
+    try { recorder.stop() } catch {
+      const no = capture.no
+      finishCapture()
+      setRecError({ no, message: '没能结束这次录音，请检查麦克风后重试。' })
     }
   }
 
   function deleteRecording(no) {
-    setRecordings((prev) => {
-      if (prev[no] && prev[no].url) URL.revokeObjectURL(prev[no].url)
-      const next = { ...prev }
-      delete next[no]
-      return next
-    })
+    const recording = recordingsRef.current[no]
+    if (!recording) return
+    replaysRef.current.get(no)?.pause()
+    URL.revokeObjectURL(recording.url)
+    const next = { ...recordingsRef.current }
+    delete next[no]
+    recordingsRef.current = next
+    setRecordings(next)
+    setRecError(null)
+    setRecFeedback({ no, message: '已删除这句的录音。' })
   }
 
-  // ── 渲染 ────────────────────────────────────────────────
+  const currentIndex = sentences.findIndex((item) => item.no === currentNo)
+  const captureBusy = capture.phase !== 'idle'
+  const mode = hasSentences && currentIndex >= 0 ? loopOne ? '单句循环' : '连续播放' : '整段播放'
+  const canSeek = hasAudio && durationMs > 0 && !captureBusy && audioStatus !== 'error'
+  const seekHint = captureBusy ? '录音结束后可拖动'
+    : audioStatus === 'error' ? '音频加载失败，暂时不能拖动'
+      : !durationMs ? '正在读取音频，稍后可拖动' : '拖动或点选，跳到想听的位置'
+  const progressPercent = durationMs > 0 ? Math.min(100, Math.max(0, progressMs / durationMs * 100)) : 0
+  const playbackStatus = !hasAudio ? '暂无音频' : captureBusy ? '录音结束后可播放原声'
+    : playPending ? '正在开始播放……' : buffering ? '音频缓冲中……'
+      : playing ? '正在播放' : audioStatus === 'error' ? '音频暂时无法播放'
+        : completed ? '本轮播放已结束' : progressMs > 0 ? '已暂停' : '待播放'
 
   return (
-    <div className="page">
-      <div className="card">
-        <div className="card-head">
-          <h2>{material.title}</h2>
-          <span className="muted">
-            {hasSentences ? `共 ${sentences.length} 句` : '暂无句段'}
-          </span>
-        </div>
+    <div className="page practice-page">
+      <header className="practice-heading">
+        <p className="practice-kicker">跟读练习 <span>·</span> {hasSentences ? sentences.length + ' 个句段' : '整段聆听'}</p>
+        <h1>{material.title}</h1>
+        <p>{hasSentences ? '听原声 → 录音跟读 → 回听比较，跟着这三步练习。' : '点播放开始听，拖动进度条可以从想听的位置继续。'}</p>
+      </header>
+      <div className="practice-layout">
+        <section className="practice-sheet" aria-label="跟读练习内容">
+          {hasAudio && (
+            <audio ref={audioRef} className="original-audio" src={material.audioUrl} preload="metadata"
+              onTimeUpdate={(event) => setProgressMs(event.currentTarget.currentTime * 1000)}
+              onLoadedMetadata={(event) => {
+                const ms = event.currentTarget.duration * 1000
+                setDurationMs(Number.isFinite(ms) && ms > 0 ? ms : 0)
+                setAudioStatus('ready')
+              }}
+              onCanPlay={() => setAudioStatus('ready')}
+              onPlaying={() => setBuffering(false)} onWaiting={() => setBuffering(true)}
+              onPause={() => { setPlaying(false); setBuffering(false) }}
+              onEnded={() => { if (hasSentences) advance(); else { stop(); setCompleted(true) } }}
+              onError={() => {
+                stop()
+                setAudioStatus('error')
+                setPlayError('音频加载失败，请检查网络，或确认这份材料的音频地址仍可访问。')
+              }} />
+          )}
+          <div className="practice-player" aria-label="原声播放控制">
+            <div className="practice-player-labels">
+              <p><strong>{mode}</strong>{hasSentences && currentIndex >= 0 && <span>第 {currentIndex + 1} 句 / 共 {sentences.length} 句</span>}</p>
+              <span className="practice-time">{formatTime(progressMs)} / {durationMs ? formatTime(durationMs) : audioStatus === 'loading' ? '时长读取中' : '时长未知'}</span>
+            </div>
+            {hasAudio && (
+              <div className="practice-seek-area">
+                <div className="practice-seek-label"><label htmlFor="playback-position">播放进度</label><span id="seek-hint">{seekHint}</span></div>
+                <input id="playback-position" className="practice-seek" type="range" min="0" max={durationMs || 1} step="100"
+                  value={Math.min(Math.max(0, progressMs), durationMs)} disabled={!canSeek} onChange={seekPlayback}
+                  style={{ '--seek-progress': progressPercent + '%' }} aria-describedby="seek-hint"
+                  aria-valuetext={formatTime(progressMs) + '，总时长 ' + formatTime(durationMs)} />
+              </div>
+            )}
+            <div className="practice-player-actions">
+              <button type="button" className="btn btn-primary practice-play" onClick={togglePlay}
+                disabled={!hasAudio || captureBusy} aria-pressed={playing}>
+                <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true">
+                  {playing || playPending ? <path d="M5 3h4v14H5zm6 0h4v14h-4z" fill="currentColor" /> : <path d="M5 3l12 7-12 7z" fill="currentColor" />}
+                </svg>
+                {playPending ? '取消播放' : playing ? '暂停' : '播放原声'}
+              </button>
+              {hasSentences && <>
+                <button type="button" className="btn" onClick={() => step(-1)} disabled={!hasAudio || currentIndex <= 0 || captureBusy}>上一句</button>
+                <button type="button" className="btn" onClick={() => step(1)} disabled={!hasAudio || currentIndex < 0 || currentIndex >= sentences.length - 1 || captureBusy}>下一句</button>
+              </>}
+            </div>
+            <p className="playback-status" role="status">{playbackStatus}</p>
+            {!hasAudio && <p className="practice-player-hint">这份材料还没有音频，暂时不能播放。{hasSentences ? '你仍可以阅读文本、录音跟读。' : '目前只有材料标题。'}</p>}
+            {playError && <p className="field-msg msg-error" role="alert">{playError}</p>}
+          </div>
 
-        {/* 音频元素：不显示浏览器自带的控件条，播放由下面的按钮控制。
-            这样「上一句 / 下一句 / 单句循环」才有一致的操作方式。
-            ⚠️ 没有句段时也走这一套（整段播放），所以进度靠 onTimeUpdate 自己显示。 */}
-        {hasAudio && (
-          <audio
-            ref={audioRef}
-            src={material.audioUrl}
-            preload="metadata"
-            onTimeUpdate={(e) => setProgressMs(e.currentTarget.currentTime * 1000)}
-            onLoadedMetadata={(e) => setDurationMs(e.currentTarget.duration * 1000)}
-            // 整段播完要把按钮变回「播放」，否则界面一直停在「暂停」
-            onEnded={() => setPlaying(false)}
-          />
-        )}
-
-        <div className="player">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={togglePlay}
-            // ⚠️ 只看**有没有音频** —— 没有句段照样能整段播放。
-            //    （旧版这里是 `!hasAudio || !hasSentences`，把 48 条只有音频的材料全挡死了。）
-            disabled={!hasAudio}
-          >
-            {playing ? '暂停' : '播放'}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => step(-1)}
-            // 逐句操作才需要句段 —— 没有句段时确实无事可做
-            disabled={!hasAudio || !hasSentences}
-          >
-            上一句
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => step(1)}
-            disabled={!hasAudio || !hasSentences}
-          >
-            下一句
-          </button>
-          <span className="player-status">
-            {hasSentences && currentNo !== null
-              ? `当前：第 ${currentNo} 句 / 共 ${sentences.length} 句${loopOne ? '（单句循环中）' : ''}`
-              : hasAudio
-                ? `整段播放　${formatTime(progressMs)} / ${formatTime(durationMs)}`
-                : '暂无音频'}
-          </span>
-        </div>
-
-        {/* 【说明放在卡住的现场】Day 14 的教训：用户点按钮没反应时，
-            视线停在按钮上，不会往下翻页面去找说明。
-            ⚠️ 所以「为什么点了没反应」必须写在按钮正下方，并且**说清不是用户的错**。 */}
-        {!hasAudio && (
-          <p className="player-hint">
-            {hasSentences
-              ? '这条材料还没有音频，所以播放按钮暂时不能用。句子文本可以正常阅读。'
-              : '这条材料还没有音频，也还没有句段，所以现在只能看到标题。'}
-          </p>
-        )}
-        {hasAudio && !hasSentences && (
-          <p className="player-hint">
-            这条材料<strong>只有音频、还没有句段</strong>（也就是「哪一句从第几秒到第几秒」）。
-            所以现在<strong>整段播放</strong>：「播放 / 暂停」随时可用，
-            「上一句 / 下一句」要等句段补上之后才能用。
-          </p>
-        )}
-        {playError && <p className="player-hint">{playError}</p>}
-
-        {hasSentences && (
-          <ul className="sentence-list">
-            {sentences.map((s) => {
-              const isCurrent = s.no === currentNo
-              const isRecording = recordingNo === s.no
-              const rec = recordings[s.no]
-
-              return (
-                <li key={s.no} className={isCurrent ? 'sentence-item current' : 'sentence-item'}>
-                  <div className="sentence-main">
-                    <span className="sentence-no">第 {s.no} 句</span>
-                    {/* text 可以是 null（PRD：不填文本也能保存）——
-                        这时不能显示成空白，要说清「这句没填文本」 */}
-                    <span className="sentence-text">
-                      {s.text ? s.text : <span className="muted">（这句没有填文本）</span>}
-                    </span>
-                  </div>
-
-                  <div className="sentence-tools">
-                    {hasAudio && (
-                      <button
-                        type="button"
-                        className="btn btn-small"
-                        onClick={() => handleSentenceClick(s)}
-                      >
-                        {isCurrent && loopOne ? '取消循环' : '单句循环'}
+          {hasSentences ? (
+            <div className="practice-sentences">
+              <div className="practice-list-heading"><h2>逐句跟读</h2><p>点「录音跟读」开始，读完点「停止录音」，再播放自己的录音。</p><p>想反复听一句？点击句子开启循环，再点一次恢复连续播放。</p></div>
+              <ol className="sentence-list">
+                {sentences.map((sentence) => {
+                  const no = sentence.no
+                  const isCurrent = currentNo === no
+                  const isRecording = capture.no === no && capture.phase === 'recording'
+                  const isRequesting = capture.no === no && capture.phase === 'requesting'
+                  const isSaving = capture.no === no && capture.phase === 'saving'
+                  const recording = recordings[no]
+                  return (
+                    <li key={no} className={'sentence-item' + (isCurrent ? ' current' : '') + (isRecording ? ' is-recording' : '')}>
+                      <div className="sentence-heading"><span className="sentence-no">第 {no} 句</span><span className="sentence-timing">{formatTime(sentence.startMs)} — {formatTime(sentence.endMs)}</span>{isCurrent && <span className="sentence-current">当前句</span>}</div>
+                      <button type="button" className="sentence-reading" onClick={() => handleSentenceClick(sentence)}
+                        disabled={!hasAudio || captureBusy} aria-pressed={isCurrent && loopOne}
+                        aria-label={'第 ' + no + ' 句：' + (sentence.text || '未填文本') + (isCurrent && loopOne ? '，取消循环' : '，单句循环')}>
+                        <span className="sentence-text" lang={sentence.text ? 'en' : undefined}>{sentence.text || '这句没有填写文本，听原声也可以练习。'}</span>
                       </button>
-                    )}
-
-                    {isRecording ? (
-                      <button type="button" className="btn btn-small btn-recording" onClick={stopRecording}>
-                        停止
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-small"
-                        onClick={() => startRecording(s.no)}
-                        disabled={recordingNo !== null}
-                      >
-                        录音
-                      </button>
-                    )}
-                  </div>
-
-                  {/* 录音条目：能回听、能删（PRD F3）。
-                      onPlay 里停原声 —— 「播放我的录音时，原声自动停止」。 */}
-                  {rec && (
-                    <div className="rec-entry">
-                      <span className="rec-label">我的录音</span>
-                      <audio
-                        className="rec-audio"
-                        controls
-                        src={rec.url}
-                        onPlay={stop}
-                      />
-                      <button
-                        type="button"
-                        className="btn btn-small"
-                        onClick={() => deleteRecording(s.no)}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-
-        {recError && <p className="player-hint">{recError}</p>}
-
-        {recordingNo !== null && (
-          <p className="state-desc">正在录音……再点一次「停止」结束。</p>
-        )}
+                      <div className="sentence-tools">
+                        <button type="button" className="btn btn-small" onClick={() => handleSentenceClick(sentence)}
+                          aria-pressed={isCurrent && loopOne} disabled={!hasAudio || captureBusy}>{isCurrent && loopOne ? '取消循环' : '单句循环'}</button>
+                        <button type="button" className={'btn btn-small' + (isRecording ? ' btn-recording' : '')}
+                          onClick={() => isRecording ? stopRecording() : startRecording(no)}
+                          disabled={captureBusy && !isRecording}>
+                          {isRequesting ? '等待麦克风……' : isSaving ? '正在生成录音……' : isRecording ? '停止录音' : recording ? '重新录音' : '录音跟读'}
+                        </button>
+                      </div>
+                      {capture.no === no && captureBusy && <p className={'recording-status' + (isRecording ? ' msg-error' : '')} role="status">{isRequesting ? '正在请求麦克风权限，请留意浏览器提示。' : isSaving ? '正在生成可回听的录音……' : '录音中……读完后点「停止录音」。'}</p>}
+                      {recording && (
+                        <div className="rec-entry">
+                          <span className="rec-label" id={'recording-label-' + no}>我的录音</span>
+                          <audio id={'recording-' + no} className="rec-audio" controls preload="metadata" src={recording.url}
+                            aria-labelledby={'recording-label-' + no} ref={replayRef(no)}
+                            onPlay={(event) => {
+                              if (captureBusyRef.current) { event.currentTarget.pause(); setRecError({ no, message: '请先结束录音，再回听已有录音。' }); return }
+                              stop(); pauseReplays(no)
+                            }}
+                            onError={() => setRecError({ no, message: '这条录音暂时无法回听，请重新录制这一句。' })} />
+                          <button type="button" className="btn btn-small" disabled={captureBusy} onClick={() => deleteRecording(no)}>删除录音</button>
+                        </div>
+                      )}
+                      {recError?.no === no && <p className="field-msg msg-error" role="alert">{recError.message}</p>}
+                      {recFeedback?.no === no && <p className="field-msg msg-ok" role="status">{recFeedback.message}</p>}
+                    </li>
+                  )
+                })}
+              </ol>
+            </div>
+          ) : (
+            <div className="whole-audio-note">
+              <span>怎么开始</span><h2>{hasAudio ? '点击「播放原声」开始听' : '材料还在准备中。'}</h2>
+              <p>{hasAudio ? '想重听某一段？拖动上方进度条，找到想听的位置。这份材料只有整段音频，暂不支持逐句跟读录音。' : '音频和句段都还没有添加，可以返回材料库选择另一份材料。'}</p>
+              {!hasAudio && <a className="btn" href={ROUTES.home}>返回材料库</a>}
+            </div>
+          )}
+          {hasSentences && <p className="practice-recording-note">录音仅保留在当前练习页，刷新或离开后会清除。同一句重新录音，会替换上一条。</p>}
+        </section>
+        <aside className="practice-aside" aria-label="练习提示">
+          <div className="practice-atmosphere"><img src="/study-morning.png" alt="" width="1536" height="1024" /><div><h2>给开口一点时间。</h2><p>戴上耳机，留一小段时间，<br />把听到的英语读成自己的声音。</p></div></div>
+          <div className="practice-tips"><h2>这样练就好</h2><ol><li><strong>听原声</strong><span>先听节奏，再留意发音。</span></li><li><strong>自己读</strong><span>一句一句录，不必急着读完。</span></li><li><strong>回听比较</strong><span>听听哪里可以更自然。</span></li></ol><p>{hasSentences ? '录音仅保留在当前页面，不会上传到云端。' : '有句段的材料可以逐句跟读和录音。'}</p></div>
+        </aside>
       </div>
-
-      {/* 说清「哪些是真的、哪些还不是」—— 含糊的说明等于没有说明（Day 14） */}
-      <p className="notice">
-        {!hasAudio
-          ? '句子是从数据库读出来的真实数据；音频还没上传，所以播放按钮暂时不能用。'
-          : hasSentences
-            ? '音频和句子都是从数据库读出来的真实数据。点击某一句可以单句循环，再点一次改成连续播放。'
-            : '音频是从数据库读出来的真实数据。这条材料还没有句段，所以整段播放；等句段补上之后就能逐句循环了。'}
-      </p>
     </div>
   )
 }
-
-// ── 加载中 ─────────────────────────────────────────────
 
 function LoadingView() {
-  return (
-    <div className="page">
-      <section className="card">
-        <div className="card-head">
-          <h2>练习</h2>
-        </div>
-        <div className="skeleton-list">
-          <div className="skeleton-bar w60" />
-          <div className="skeleton-bar w40" />
-          <div className="skeleton-bar w60" />
-        </div>
-        <p className="state-desc">正在读取材料……</p>
-      </section>
-    </div>
-  )
+  return <div className="page practice-page"><section className="card practice-loading" aria-busy="true"><h1>跟读练习</h1><div className="skeleton-list" aria-hidden="true"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div><p className="state-desc" role="status">正在读取材料……</p></section></div>
 }
-
-// ── 找不到（地址路由带来的新状态） ──────────────────────
-//
-// 三种「找不到」要分开说，否则用户不知道该怎么改：
-//   ① 地址没写 id       → #/practice            → 提示「没指定哪条」
-//   ② id 在库里不存在   → #/practice/999        → 提示「编号不存在」
-//   ③ 参数位置放错了    → #/practice/1?state=x  → 提示「参数要放 # 前面」
-//
-// 第 ③ 种是新手最容易撞上的（Day 13 用户实测就撞了一次），
-// 所以单独识别并给出可照抄的正确写法，而不是笼统说「编号不在列表里」。
 
 function NotFoundView({ materialId, isIdle }) {
-  const hint = buildNotFoundHint({ materialId, isIdle })
-
-  return (
-    <div className="page">
-      <section className="card state-box">
-        <p className="state-title">找不到这条材料</p>
-        <p className="state-desc">{hint.message}</p>
-        {hint.example && (
-          <p className="state-desc">
-            正确写法：<code className="code-inline">{hint.example}</code>
-          </p>
-        )}
-        <a className="btn btn-primary" href={ROUTES.home}>
-          回到首页挑一条
-        </a>
-      </section>
-    </div>
-  )
+  return <div className="page practice-page"><section className="card state-box"><p className="state-symbol" aria-hidden="true">{isIdle ? '♪' : '?'}</p><h1 className="state-title">{isIdle ? '今天想读哪一段？' : '找不到这份材料'}</h1><p className="state-desc">{isIdle ? '先从材料库选一份喜欢的内容，再开始听和读。' : '这份材料可能已被删除，或链接已经失效。你可以回到材料库重新选择。'}</p>{!isIdle && materialId && <p className="state-desc">材料编号：{materialId}</p>}<a className="btn btn-primary" href={ROUTES.home}>去材料库选一份</a></section></div>
 }
-
-// 判断是哪种「找不到」，返回对应的说明。
-// ⚠️ 注意：能走到这里说明 parseHash 已经把 id 修好了（见 useHashRoute.js），
-//    所以「参数位置」这种情况的实际表现是「id 正常但页面还是找不到」——
-//    这里保留识别逻辑只为提示更准确，正常情况下 ③ 已经不会触发。
-function buildNotFoundHint({ materialId, isIdle }) {
-  if (isIdle || !materialId) {
-    return {
-      message: '这个地址没有指定要练哪条材料。',
-      // Day 15 修复：原来写的是 'localhost:5173/#/practice/1'，在公网上会误导用户。
-      // 用相对路径而不是拼当前域名 —— 提示要教的是「路径怎么写」，
-      // 不是「访问哪个域名」。域名会变（本地 / 公网 / 以后可能换），
-      // 写相对路径本地和线上都对，这段文案以后不用再改。
-      example: '#/practice/1',
-    }
-  }
-  return {
-    message: `数据库里没有编号为 ${materialId} 的材料，可能是链接失效，或这条材料已被删除。`,
-    example: null,
-  }
-}
-
-// ── 读取失败 ───────────────────────────────────────────
-//
-// ⚠️ 和「找不到」分开：这里给的是**重试**（网络抖了一下通常点一下就好），
-//    而「找不到」给的是**换个材料**（重试多少次都还是不存在）。
 
 function ErrorView({ message, onRetry }) {
-  return (
-    <div className="page">
-      <section className="card state-box state-error">
-        <p className="state-title">材料读取失败</p>
-        <p className="state-desc">{message}</p>
-        <div className="empty-actions">
-          <button type="button" className="btn btn-primary" onClick={onRetry}>
-            重新读取
-          </button>
-          <a className="btn" href={ROUTES.home}>
-            回到首页
-          </a>
-        </div>
-      </section>
-    </div>
-  )
+  return <div className="page practice-page"><section className="card state-box state-error"><p className="state-symbol" aria-hidden="true">!</p><h1 className="state-title">材料读取失败</h1><p className="state-desc" role="alert">{message || '暂时无法连接服务器，请检查网络后再试。'}</p><div className="empty-actions"><button type="button" className="btn btn-primary" onClick={onRetry}>重新读取</button><a className="btn" href={ROUTES.home}>返回材料库</a></div></section></div>
 }
